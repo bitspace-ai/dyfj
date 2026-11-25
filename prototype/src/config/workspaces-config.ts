@@ -330,7 +330,13 @@ export function parseWorkspacesConfig(
       const canonicalRoot = canonical(root);
       for (const profile of ordered) {
         if (canonicalRoot === profile.path) return profile;
-        if (canonicalRoot.startsWith(`${profile.path}/`)) return profile;
+        // A profile's prefix ends at a path boundary. The filesystem root is
+        // the one path that already ends at one, so its prefix is itself:
+        // joining another slash would test `//` and never match a real root,
+        // leaving a configured `path = "/"` silently ineffective. Sorting by
+        // length keeps it last, so every deeper profile still wins.
+        const prefix = profile.path === "/" ? "/" : `${profile.path}/`;
+        if (canonicalRoot.startsWith(prefix)) return profile;
       }
       return null;
     },

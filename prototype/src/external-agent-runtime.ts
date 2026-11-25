@@ -12,6 +12,7 @@ import {
   codexEnvironmentNameAllowed,
   processEnv,
   type RuntimePolicy,
+  type WorkspaceConfigResolver,
 } from "./config/mod.ts";
 import { dirname, join } from "node:path";
 import {
@@ -788,6 +789,11 @@ export interface ExternalAgentRuntimeDependencies {
   runPolicy?: RuntimePolicy;
   /** The Workbench tool bridge for Codex ChatGPT turns; absent, Codex gets none. */
   toolBridge?: ExternalAgentToolBridge;
+  /**
+   * Which configured sections apply to a turn's workspace (BIT-982). Absent,
+   * the boot-time gate and dispatch sections apply to every workspace.
+   */
+  workspaceConfig?: WorkspaceConfigResolver;
 }
 
 /** The turn's execution profile, with its admitted added roots; `codex` is what a Codex profile is built from. */

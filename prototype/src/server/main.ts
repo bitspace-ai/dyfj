@@ -489,6 +489,10 @@ function composeTurnRuntime(
         ...(toolBridge === undefined ? {} : { toolBridge }),
         ...(dispatch === undefined ? {} : { dispatch }),
         ...(gate === undefined ? {} : { gate }),
+        // The same resolver the native route reads, so a Codex turn's gate
+        // and dispatch tools come from the section that covers ITS workspace
+        // rather than the boot-time globals (BIT-982).
+        ...(workspaceConfig === undefined ? {} : { workspaceConfig }),
       }),
   };
   // One set of workspace-root anchors per engine: a root anchored by the

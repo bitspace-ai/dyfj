@@ -203,3 +203,41 @@ describe("the effective policy is immutable", () => {
     assert.strictEqual(JSON.stringify(inputs), before);
   });
 });
+
+describe("each run entry keeps the role its source gives it", () => {
+  /** The role of every executable the policy lists, by program. */
+  async function roles(
+    inputs: RuntimePolicyInputs,
+  ): Promise<Map<string, string>> {
+    const { composeEffectivePolicy } = await effectiveModule();
+    const policy = composeEffectivePolicy(inputs, ENVELOPE);
+    return new Map(
+      policy.processes.executables.map((entry) => [entry.program, entry.role]),
+    );
+  }
+
+  it("keeps the runtime executable and the Node path as runners", async () => {
+    // Pinned because a new source's role is easy to add by sharing a case with
+    // these: the two binaries run the program, they are not tools it starts.
+    const byProgram = await roles({
+      runtimeExecutable: "/opt/runtime/bin/node",
+      nodePath: "/opt/node/bin/node",
+    });
+    assert.strictEqual(byProgram.get("/opt/runtime/bin/node"), "runner");
+    assert.strictEqual(byProgram.get("/opt/node/bin/node"), "runner");
+  });
+
+  it("gives a workspace profile's programs the tool role, and only them", async () => {
+    const byProgram = await roles({
+      runtimeExecutable: "/opt/runtime/bin/node",
+      workspacePrograms: ["npm", "/opt/bin/gate"],
+    });
+    assert.strictEqual(byProgram.get("/opt/runtime/bin/node"), "runner");
+    assert.strictEqual(byProgram.get("npm"), "tool");
+    assert.strictEqual(byProgram.get("/opt/bin/gate"), "tool");
+    // The static table is untouched: bash and git stay tools, the runners stay
+    // runners.
+    assert.strictEqual(byProgram.get("bash"), "tool");
+    assert.strictEqual(byProgram.get("/bin/kill"), "runner");
+  });
+});

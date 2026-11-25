@@ -737,6 +737,10 @@ function executionRole(sources: readonly RunGrantSource[]): ExecutionRole {
       return "resolver";
     case "runtime-executable":
     case "node-path":
+      // The runtime's own executable, and the Node binary a child is started
+      // on, are the runtime itself by role: they run the program, they are not
+      // a tool it starts.
+      return "runner";
     case "workspace-config":
       // A workspace profile's commands are the operator's own tools: the gate
       // and publish programs run as tools, not as the runtime itself.

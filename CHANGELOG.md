@@ -1042,6 +1042,31 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
+- **Workspace profiles apply on the Codex route too (`BIT-982`).** A turn's
+  workspace profile is now resolved before the ACP route's instruction-trust
+  check, so the Codex ChatGPT route and the native route reach the same
+  decision: a profile that elevates its workspace's instructions is
+  honored where the global setting declines, and a profile that declines them
+  refuses the route where the global setting elevates. Only a loopback caller
+  is ever eligible, and an unresolved workspace is never elevated. The same
+  resolved section now decides the gate and dispatch tools a Codex turn is
+  offered, so a profile-only gate no longer disappears on that route and a
+  profile's dispatch roots replace the boot-time `[dispatch]` instead of being
+  ignored. A workspace no profile matches keeps the global sections.
+
+- **A `[[workspaces]]` profile at the filesystem root covers its descendants
+  (`BIT-982`).** A profile whose `path` is `/` matched only `/` itself: the
+  descendant test appended another slash and looked for `//`. It now treats the
+  root as its own prefix, so such a profile covers every workspace without a
+  more specific profile, and any deeper profile still wins.
+
+- **Run roles keep the runtime's own executables as runners (`BIT-982`).** The
+  effective policy's run list gave every entry the tool role once workspace
+  profiles could add programs, including the runtime's own executable and the
+  configured `DYFJ_NODE_PATH`, which had been runners. Only a program a
+  workspace profile declares is a tool; the two runtime entries are runners
+  again.
+
 - **A restrictive workspace policy fails closed in the sandbox (`BIT-982`).**
   When a workspace's profile cannot be resolved for a sandboxed command - its
   `sandbox.require_worktree` or `sandbox.deny_read` lookup rejects - the

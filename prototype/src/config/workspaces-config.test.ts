@@ -255,3 +255,36 @@ describe("workspace profiles: a path that does not exist yet", () => {
     }
   });
 });
+
+describe("workspace profiles: the filesystem root as a profile", () => {
+  it("covers a workspace no deeper profile names", () => {
+    const parsed = parse([{ path: "/", trust_instructions: true }]);
+    assert.strictEqual(parsed.profiles.length, 1);
+    assert.strictEqual(parsed.profiles[0]!.path, "/");
+    // Every ordinary canonical root is under the filesystem root.
+    for (const root of ["/work/repo", "/work/repo/prototype", "/tmp"]) {
+      assert.strictEqual(
+        parsed.match(root)?.path,
+        "/",
+        `${root} must match the root profile`,
+      );
+    }
+  });
+
+  it("loses to every deeper profile, at any depth", () => {
+    const parsed = parse([
+      { path: "/", trust_instructions: true },
+      { path: "/work", trust_instructions: false },
+      { path: "/work/repo", gate: { command: ["npm", "test"] } },
+    ]);
+    assert.strictEqual(parsed.match("/work/repo")?.path, "/work/repo");
+    assert.strictEqual(parsed.match("/work/repo/prototype")?.path, "/work/repo");
+    assert.strictEqual(parsed.match("/work/other")?.path, "/work");
+    assert.strictEqual(parsed.match("/elsewhere")?.path, "/");
+  });
+
+  it("does not treat a sibling sharing the root's name as covered by another", () => {
+    const parsed = parse([{ path: "/work/repo", trust_instructions: true }]);
+    assert.strictEqual(parsed.match("/work/repoother"), null);
+  });
+});

@@ -767,8 +767,12 @@ ticket registry and the dispatch service are likewise owned by the runtime for
 its lifetime, and they exist whenever the global section or any profile
 declares that tool — so a configuration with no global `[gate]`, `[publish]` or
 `[dispatch]` at all still gets those tools in the workspaces whose profiles
-declare them, and nowhere else. A flat config file with no `[[workspaces]]`
-behaves exactly as it did before profiles existed.
+declare them, and nowhere else. Both runtime routes resolve the profile from
+the turn's own workspace: the native turn's context stage and the Codex (ACP)
+turn's bridge read the same sections, and a Codex turn's instruction trust is
+decided from the profile that covers its workspace before the route is chosen,
+so neither direction can be bypassed by picking a route. A flat config file
+with no `[[workspaces]]` behaves exactly as it did before profiles existed.
 
 ### Gate tools
 

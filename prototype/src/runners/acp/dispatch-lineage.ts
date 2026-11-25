@@ -18,6 +18,8 @@ import {
   sessionStartEvent,
   type Store,
 } from "../../store/mod.ts";
+import type { WorkspaceConfigResolver } from "../../config/mod.ts";
+import { gateSectionFor } from "../../config/mod.ts";
 import { DISPATCH_CHILD_CONTEXT_LINE, type DispatchSessionFactory, type ToolCatalogPorts } from "../../tools/mod.ts";
 import {
   bindCodexTurn,
@@ -25,13 +27,39 @@ import {
   type ExternalAgentToolBridge,
 } from "../../workbench-tool-bridge.ts";
 
-/** Bind coordinator tools using runtime-owned session identity and persisted depth. */
+/**
+ * Bind coordinator tools using runtime-owned session identity and persisted
+ * depth, and the sections that apply to this turn's workspace (BIT-982): the
+ * runtime owns one gate-run registry and one dispatch service for its
+ * lifetime, and which of their commands this turn may reach is decided per
+ * workspace here, exactly as the native route decides it
+ * (`engine/build-context.ts`). Without that, a profile-only gate carried a
+ * null boot config and vanished on Codex turns, and a boot dispatch config
+ * kept its global roots even where a profile narrowed them.
+ */
 export async function bindExternalAgentTools(
   input: CodexTurnTools & { sessionId?: string; dispatchRecord?: DispatchRecord },
-  dependencies: { gate?: import("../../tools/mod.ts").GateRuntimePorts; store: Store; dispatch?: DispatchSessionFactory; toolBridge?: ExternalAgentToolBridge } &
-    Pick<ToolCatalogPorts, "env" | "dialExecutor" | "sandbox">,
+  dependencies: {
+    gate?: import("../../tools/mod.ts").GateRuntimePorts;
+    store: Store;
+    dispatch?: DispatchSessionFactory;
+    toolBridge?: ExternalAgentToolBridge;
+    /** The profile resolver; absent, the boot-time sections apply. */
+    workspaceConfig?: WorkspaceConfigResolver;
+  } & Pick<ToolCatalogPorts, "env" | "dialExecutor" | "sandbox">,
   context: Omit<Parameters<DispatchSessionFactory["forSession"]>[0], "depth">,
 ) {
+  // What this workspace is entitled to. An absent resolver keeps the boot-time
+  // global section, which is what a runtime configured without `[[workspaces]]`
+  // has always done.
+  const resolved = dependencies.workspaceConfig === undefined ||
+      input.workspaceRoot === undefined
+    ? undefined
+    : dependencies.workspaceConfig.resolve(input.workspaceRoot);
+  const gate = dependencies.gate === undefined ? undefined : {
+    ...dependencies.gate,
+    config: gateSectionFor(resolved, dependencies.gate.config),
+  };
   let dispatch;
   if (context.authContext.transport === "loopback" &&
       input.runner.profile === "codex-chatgpt" && dependencies.toolBridge !== undefined &&
@@ -42,9 +70,23 @@ export async function bindExternalAgentTools(
       sessionId: context.parentSessionId,
       events: dependencies.store.events,
     });
-    if (depth === 0) dispatch = dependencies.dispatch.forSession({ ...context, depth });
+    // A workspace whose profile declares no dispatch section starts no
+    // children, whatever the boot-time `[dispatch]` says.
+    const dispatchConfig = resolved === undefined ? undefined : resolved.dispatch;
+    if (depth === 0 && dispatchConfig !== null) {
+      dispatch = dependencies.dispatch.forSession({
+        ...context,
+        depth,
+        ...(dispatchConfig === undefined ? {} : { config: dispatchConfig }),
+      });
+    }
   }
-  return await bindCodexTurn(dependencies.toolBridge, context.parentSessionId, { ...input, dispatch }, dependencies);
+  return await bindCodexTurn(
+    dependencies.toolBridge,
+    context.parentSessionId,
+    { ...input, dispatch },
+    { ...dependencies, ...(gate === undefined ? {} : { gate }) },
+  );
 }
 
 
