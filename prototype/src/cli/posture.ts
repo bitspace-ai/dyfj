@@ -233,17 +233,20 @@ export async function fetchSessionPosture(
       // the tier, locality and, for a model that takes one, the reasoning
       // effort levels. Read once, whether the session named the model or the
       // runtime's default answers.
+      // An answer without a catalog (an older or degraded runtime) narrows
+      // the line rather than failing the session's posture.
       const { models } = await client.request(
         "models/list",
         undefined,
         signal,
       ) as {
-        models: ModelRow[];
+        models?: ModelRow[];
       };
+      const rows: ModelRow[] = Array.isArray(models) ? models : [];
       const rowFor = (candidate: string | undefined) =>
         candidate === undefined
           ? undefined
-          : models.find((m) => m.slug === candidate);
+          : rows.find((m) => m.slug === candidate);
       if (slug !== undefined) {
         const row = rowFor(slug);
         tier = row?.tier;
