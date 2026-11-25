@@ -68,7 +68,7 @@
             "kind": "budget_ceiling",
             "title": "Spend check",
             "reason": "session_limit",
-            "estimatedCostUsd": 1.6349999999999998,
+            "estimatedCostUsd": 1.615,
             "limitUsd": 1,
             "sessionCostSoFarUsd": 0,
             "sessionLimitUsd": 1,
@@ -83,11 +83,11 @@
               "session_limit"
             ],
             "raisesToUsd": {
-              "session_limit": 2.635
+              "session_limit": 2.615
             },
             "approvedToUsd": {},
             "authzBasis": "policy:allow:operator-confirmed-ceiling",
-            "message": "Spend check\nCrossed:   session limit\nTurn:      $0.00 spent, $1.6350 with this call, limit $100.00\nSession:   $0.00 spent, $1.6350 with this call, limit $1.00\nToday:     $0.00 spent, $1.6350 with this call, limit $25.00\nRunaway:   $0.00 spent, $1.6350 with this call, limit $100.00 (since the last tool progress)\nPer call:  ~$1.6350 this call, limit $100.00\nApproving raises:\n  session limit to $2.6350 (+$1.00), for this session"
+            "message": "Spend check\nCrossed:   session limit\nTurn:      $0.00 spent, $1.6150 with this call, limit $100.00\nSession:   $0.00 spent, $1.6150 with this call, limit $1.00\nToday:     $0.00 spent, $1.6150 with this call, limit $25.00\nRunaway:   $0.00 spent, $1.6150 with this call, limit $100.00 (since the last tool progress)\nPer call:  ~$1.6150 this call, limit $100.00\nApproving raises:\n  session limit to $2.6150 (+$1.00), for this session"
           }
         },
         {
@@ -119,7 +119,7 @@
             "kind": "budget_ceiling",
             "title": "Spend check",
             "reason": "session_limit",
-            "estimatedCostUsd": 1.6349999999999998,
+            "estimatedCostUsd": 1.615,
             "limitUsd": 1,
             "sessionCostSoFarUsd": 0,
             "sessionLimitUsd": 1,
@@ -134,11 +134,11 @@
               "session_limit"
             ],
             "raisesToUsd": {
-              "session_limit": 2.635
+              "session_limit": 2.615
             },
             "approvedToUsd": {},
             "authzBasis": "policy:allow:operator-confirmed-ceiling",
-            "message": "Spend check\nCrossed:   session limit\nTurn:      $0.00 spent, $1.6350 with this call, limit $100.00\nSession:   $0.00 spent, $1.6350 with this call, limit $1.00\nToday:     $0.00 spent, $1.6350 with this call, limit $25.00\nRunaway:   $0.00 spent, $1.6350 with this call, limit $100.00 (since the last tool progress)\nPer call:  ~$1.6350 this call, limit $100.00\nApproving raises:\n  session limit to $2.6350 (+$1.00), for this session"
+            "message": "Spend check\nCrossed:   session limit\nTurn:      $0.00 spent, $1.6150 with this call, limit $100.00\nSession:   $0.00 spent, $1.6150 with this call, limit $1.00\nToday:     $0.00 spent, $1.6150 with this call, limit $25.00\nRunaway:   $0.00 spent, $1.6150 with this call, limit $100.00 (since the last tool progress)\nPer call:  ~$1.6150 this call, limit $100.00\nApproving raises:\n  session limit to $2.6150 (+$1.00), for this session"
           },
           "response": {
             "decision": "deny",
@@ -271,7 +271,7 @@
         "progress_total": 1,
         "mode": "interactive",
         "iteration": null,
-        "content": "# Workbench Session\n\n**Mode:** turn\n**Trace:** <TRACE:2>\n\n## Prompt\n\n[golden:s6] Paid consent not given.\n\n## Context Sources\n\n- none\n\n## Receipt\n\nWorkbench receipt\nSession: <ULID:2>\nTrace:   <TRACE:2>\nProvider: mlx-lm / openai-completions\nModel:   Golden Priced (golden-priced, tier 1)\nRoute:   explicit_model_id\nPaid inference used: no\nEstimated cost: $1.640000\nActual cost:    $0.000000\nSession cost:   $0.000000\nTokens:  0 in, 0 out\nCache:   0 read, 0 written\nCalls:   0\nTool steps: 0/32\nTotal elapsed: <DURATION>",
+        "content": "# Workbench Session\n\n**Mode:** turn\n**Trace:** <TRACE:2>\n\n## Prompt\n\n[golden:s6] Paid consent not given.\n\n## Context Sources\n\n- none\n\n## Receipt\n\nWorkbench receipt\nSession: <ULID:2>\nTrace:   <TRACE:2>\nProvider: mlx-lm / openai-completions\nModel:   Golden Priced (golden-priced, tier 1)\nRoute:   explicit_model_id\nPaid inference used: no\nEstimated cost: $1.615000\nActual cost:    $0.000000\nSession cost:   $0.000000\nTokens:  0 in, 0 out\nCache:   0 read, 0 written\nCalls:   0\nTool steps: 0/32\nTotal elapsed: <DURATION>",
         "created_at": "<TIMESTAMP nnnn-nn-nn nn:nn:nn.nnnnnn>",
         "updated_at": "<TIMESTAMP nnnn-nn-nn nn:nn:nn.nnnnnn>"
       }

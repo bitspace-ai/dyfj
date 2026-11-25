@@ -128,7 +128,7 @@
             "type": "beforeProviderRequest",
             "sessionId": "<ULID:1>",
             "modelSlug": "golden-local",
-            "estimatedInputCount": 328
+            "estimatedInputCount": 324
           }
         }
       },
@@ -214,7 +214,7 @@
             "type": "beforeProviderRequest",
             "sessionId": "<ULID:1>",
             "modelSlug": "golden-local",
-            "estimatedInputCount": 446
+            "estimatedInputCount": 442
           }
         }
       },
