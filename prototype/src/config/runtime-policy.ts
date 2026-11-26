@@ -315,6 +315,15 @@ export interface RuntimePolicyInputs {
    * (`process.execPath`) when absent. Null adds none.
    */
   runtimeExecutable?: string | null;
+  /**
+   * Programs the operator's `[[workspaces]]` profiles declare (their gate and
+   * publish commands), added to the run list at boot. The policy is composed
+   * once, before any turn names a workspace, so it cannot vary by workspace:
+   * every declared program is admitted here, and which one a turn may actually
+   * start is still decided by the gate or publish tool's own per-workspace
+   * policy (`publishPolicyFor`, and the gate's `argv[0]` grant).
+   */
+  workspacePrograms?: readonly string[];
 }
 
 /** Where a composed net entry came from. */
@@ -332,6 +341,7 @@ export type RunGrantSource =
   | { readonly kind: "static"; readonly role: StaticRunRole }
   | { readonly kind: "runtime-executable" }
   | { readonly kind: "node-path" }
+  | { readonly kind: "workspace-config" }
   | { readonly kind: "secrets-resolver" };
 
 export interface ComposedGrant<Source> {
@@ -438,6 +448,9 @@ const NODE_PATH: RunGrantSource = Object.freeze({ kind: "node-path" });
 const RESOLVER_COMMAND: RunGrantSource = Object.freeze({
   kind: "secrets-resolver",
 });
+const WORKSPACE_CONFIG: RunGrantSource = Object.freeze({
+  kind: "workspace-config",
+});
 const KILL: RunGrantSource = STATIC_RUN.runner;
 
 /**
@@ -481,6 +494,7 @@ export function composeRuntimeGrants(
     [resolver === undefined || resolver === "" ? null : resolver],
     RESOLVER_COMMAND,
   );
+  appendNew(run, inputs.workspacePrograms ?? [], WORKSPACE_CONFIG);
 
   const env = [...RUNTIME_ENV_GRANTS];
   for (const name of inputs.secrets?.inheritEnv ?? []) {

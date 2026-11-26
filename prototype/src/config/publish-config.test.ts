@@ -13,6 +13,7 @@ import {
   type PublishConfig,
   type PublishValues,
   publishReportPathFor,
+  publishUsesImplementer,
   REFUSED_PROGRAMS,
 } from "./publish-config.ts";
 
@@ -325,6 +326,7 @@ describe("publish config: filling a template", () => {
     preGate: ["./pre-gate", "--range={range}"],
     gate: ["./gate", "--report={report}", "{repo}"],
     reportPath: "/tmp/gate-{ticket}.log",
+    baseRef: "origin/main",
     gateTimeoutMs: 60_000,
     ticketTtlMs: 120_000,
   };
@@ -529,6 +531,7 @@ describe("publish config: substitution bounds", () => {
       preGate: ["./pre-gate"],
       gate: ["./gate"],
       reportPath: "/tmp/reports/{issue}/{ticket}.log",
+      baseRef: "origin/main",
       gateTimeoutMs: 600_000,
       ticketTtlMs: 3_600_000,
     };
@@ -556,5 +559,75 @@ describe("publish config: substitution bounds the whole argv", () => {
       () => fillPublishArgv(many, values({ repo: big })),
       /over 8192 bytes after substitution/,
     );
+  });
+});
+
+describe("publish config: base_ref", () => {
+  it("defaults the range to origin/main", () => {
+    const config = parsePublishConfig(
+      table({ pre_gate: ["./pre"], gate: ["./gate", "--range={range}"] }),
+      WHERE,
+    );
+    assert.strictEqual(config?.baseRef, "origin/main");
+  });
+
+  it("derives {range} from a configured base_ref", () => {
+    const config = parsePublishConfig(
+      table({
+        pre_gate: ["./pre", "--range={range}"],
+        gate: ["./gate"],
+        base_ref: "origin/master",
+      }),
+      WHERE,
+    );
+    assert.strictEqual(config?.baseRef, "origin/master");
+  });
+
+  it("refuses an empty, control-character, flag-shaped or whitespace base_ref", () => {
+    for (const bad of ["", "-oops", "origin/main extra", "origin/main\n", 7, "a..b"]) {
+      assert.throws(
+        () =>
+          parsePublishConfig(
+            table({ pre_gate: ["./pre"], gate: ["./gate"], base_ref: bad }),
+            WHERE,
+          ),
+        /publish\.base_ref/,
+        JSON.stringify(bad),
+      );
+    }
+  });
+});
+
+describe("publish config: {implementer} is needed only when a command names it", () => {
+  it("reports no need when no configured command carries {implementer}", () => {
+    const plain = parsePublishConfig(
+      table({ pre_gate: ["./pre"], gate: ["./gate", "--range={range}"] }),
+      WHERE,
+    );
+    assert.strictEqual(publishUsesImplementer(plain!), false);
+  });
+
+  it("reports the need when the gate names it", () => {
+    const review = parsePublishConfig(
+      table({
+        pre_gate: ["./pre"],
+        gate: ["./gate", "--reviewer-family={implementer}"],
+      }),
+      WHERE,
+    );
+    assert.strictEqual(publishUsesImplementer(review!), true);
+  });
+
+  it("counts a push or open_pr command that names it", () => {
+    const config = parsePublishConfig(
+      table({
+        pre_gate: ["./pre"],
+        gate: ["./gate"],
+        push: ["git", "push", "origin", "{head}:refs/heads/{branch}"],
+        open_pr: ["gh", "pr", "create", "--assignee={implementer}"],
+      }),
+      WHERE,
+    );
+    assert.strictEqual(publishUsesImplementer(config!), true);
   });
 });

@@ -46,7 +46,12 @@ import type {
 } from "../providers/mod.ts";
 import type { EventInsert, Store } from "../store/mod.ts";
 import type { Clock } from "../kernel/mod.ts";
-import type { Env, RuntimePolicy } from "../config/mod.ts";
+import type {
+  Env,
+  ResolvedWorkspaceConfig,
+  RuntimePolicy,
+  WorkspaceConfigResolver,
+} from "../config/mod.ts";
 import type { WorkbenchTurnParams } from "../providers/mod.ts";
 import type { BudgetScopes, SessionGrantScopes } from "./session-owner.ts";
 import type { ToolHistoryScopes } from "./tool-history.ts";
@@ -86,6 +91,11 @@ export interface NativeTurnPorts {
   dispatch?: DispatchEnginePorts;
   /** The runtime policy memory recall is checked against; the base when absent. */
   policy?: RuntimePolicy;
+  /**
+   * Which configured section applies to the turn's workspace (BIT-982). Absent
+   * leaves the boot-time globals in force, exactly as before profiles existed.
+   */
+  workspaceConfig?: WorkspaceConfigResolver;
 }
 
 /** Write one event row through the store's journal. */
@@ -209,6 +219,12 @@ export interface TurnState {
   workspaceResolutionFailed: boolean;
   /** The extra roots admitted for the file tools; empty when none. */
   additionalRoots: readonly AdmittedAdditionalRoot[];
+  /**
+   * The configuration resolved for this turn's workspace, once the root is
+   * known: which gate, publish, sandbox and dispatch sections apply, and
+   * whether the operator elevated this workspace's instructions.
+   */
+  workspaceConfig: ResolvedWorkspaceConfig | undefined;
   systemPrompt: string;
   /** The text the model receives as the user turn. */
   modelPrompt: string;
@@ -282,6 +298,7 @@ export function newTurnState(
     workspaceRootIdentity: undefined,
     workspaceResolutionFailed: false,
     additionalRoots: [],
+    workspaceConfig: undefined,
     systemPrompt: "",
     // Prior conversation rides in the transcript as real messages, so the
     // prompt is just the current message.

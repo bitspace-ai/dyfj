@@ -31,6 +31,7 @@ import type { RoutedTurn } from "./routed-turn.ts";
 import { loadTranscript } from "./load-transcript.ts";
 import { agentLoop } from "./agent-loop.ts";
 import { completeTurn, failTurn, finalize } from "./finalize.ts";
+import { resolveWorkspaceTrust } from "./workspace-trust.ts";
 
 function requireExternalAgentRunner(
   services: WorkbenchRuntimeServices | undefined,
@@ -61,12 +62,35 @@ export async function runWorkbenchRuntime(
   services: WorkbenchRuntimeServices,
 ): Promise<WorkbenchRuntimeResult> {
   const runtimeInput = await withSessionModel(requested, services.store.events);
-  const route = await resolveRoute(runtimeInput, services.store.models).catch(
+  // A workspace profile may elevate or decline this workspace's instructions
+  // even where the operator's global setting says otherwise, and the ACP route
+  // is decided before any session or context exists. So the same decision the
+  // context stage makes is resolved here, once, and both the route's trust
+  // check and the ACP runner read it: a profile cannot be bypassed by picking
+  // a route, in either direction.
+  const workspaceTrust = await resolveWorkspaceTrust(runtimeInput, services);
+  const route = await resolveRoute({
+    ...runtimeInput,
+    trustWorkspaceInstructions: workspaceTrust.trusted,
+  }, services.store.models).catch(
     (error) => explainSessionModelFailure(runtimeInput, error),
   );
   if (route.runner === "acp") {
     return await requireExternalAgentRunner(services).run({
       ...runtimeInput,
+      trustWorkspaceInstructions: workspaceTrust.trusted,
+      // The runner re-checks this against the workspace it finally resolves:
+      // the path can change between here and the launch (a symlink swapped
+      // while the paid preflight was on screen), and a decision made about one
+      // directory must never stand for another.
+      ...(workspaceTrust.workspace === undefined
+        ? {}
+        : {
+          workspaceTrust: {
+            trusted: workspaceTrust.trusted,
+            workspace: workspaceTrust.workspace,
+          },
+        }),
       routingOptions: route.routingOptions,
       runner: route.selection,
     });
@@ -90,6 +114,9 @@ export async function runWorkbenchRuntime(
     ...(services.gate === undefined ? {} : { gate: services.gate }),
     ...(services.publish === undefined ? {} : { publish: services.publish }),
     ...(services.dispatch === undefined ? {} : { dispatch: services.dispatch }),
+    ...(services.workspaceConfig === undefined
+      ? {}
+      : { workspaceConfig: services.workspaceConfig }),
     clock: services.clock ?? systemClock,
     env: services.env ?? processEnv,
     policy,

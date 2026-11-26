@@ -12,6 +12,7 @@ import {
   codexEnvironmentNameAllowed,
   processEnv,
   type RuntimePolicy,
+  type WorkspaceConfigResolver,
 } from "./config/mod.ts";
 import { dirname, join } from "node:path";
 import {
@@ -164,6 +165,14 @@ export interface ExternalAgentRuntimeInput
   };
   dispatchRecord?: DispatchRecord;
   onSessionRecorded?: (sessionId: string) => void | Promise<void>;
+  /**
+   * The instruction-trust decision route resolution made, and the canonical
+   * workspace it was made about. The runner re-checks it against the workspace
+   * it actually resolved: a path can change between the approval prompt and
+   * the launch, and a decision about one directory must never stand for
+   * another.
+   */
+  workspaceTrust?: { trusted: boolean; workspace: string };
   codexInteractiveIdleSeconds?: number;
   codexOperatorContext?: boolean;
   codexPath?: "operator" | "minimal";
@@ -751,6 +760,37 @@ export function verifiedRouteFacts(
   return { accessRoute: profile.accessRoute, costBasis: profile.costBasis };
 }
 
+/**
+ * Whether this run may elevate the workspace's instructions, judged against the
+ * workspace it is about to launch in.
+ *
+ * Route resolution answered this question about the workspace it resolved, but
+ * the launch happens later: a paid-approval callback, a resume lookup or a
+ * swapped symlink can move the path in between. So the resolver is asked again
+ * here about the FINAL canonical workspace, and only a decision about that
+ * directory can elevate it. Without a resolver the operator's global setting is
+ * the answer, as before profiles existed; that setting names no workspace, so
+ * it cannot be about the wrong one.
+ */
+function trustsWorkspaceInstructions(
+  input: ExternalAgentRuntimeInput,
+  dependencies: ExternalAgentRuntimeDependencies,
+  workspace: string,
+): boolean {
+  // The resolver of record answers about the workspace this run resolved.
+  const resolved = dependencies.workspaceConfig?.resolve(workspace)
+    .trustInstructions;
+  if (resolved !== undefined) return resolved === true;
+  // Without a resolver, the decision route resolution made stands only for the
+  // directory it was made about: a launch that resolved anywhere else is
+  // refused, never inherited.
+  const decided = input.workspaceTrust;
+  if (decided !== undefined) {
+    return decided.trusted && decided.workspace === workspace;
+  }
+  return input.trustWorkspaceInstructions === true;
+}
+
 async function emitRuntimeEvent(
   handler: NonNullable<ExternalAgentRuntimeInput["frames"]>["onRuntimeEvent"],
   event: WorkbenchRuntimeEvent,
@@ -788,6 +828,11 @@ export interface ExternalAgentRuntimeDependencies {
   runPolicy?: RuntimePolicy;
   /** The Workbench tool bridge for Codex ChatGPT turns; absent, Codex gets none. */
   toolBridge?: ExternalAgentToolBridge;
+  /**
+   * Which configured sections apply to a turn's workspace (BIT-982). Absent,
+   * the boot-time gate and dispatch sections apply to every workspace.
+   */
+  workspaceConfig?: WorkspaceConfigResolver;
 }
 
 /** The turn's execution profile, with its admitted added roots; `codex` is what a Codex profile is built from. */
@@ -858,14 +903,19 @@ export async function runExternalAgentWorkbenchRuntime(
         "External local agents are unavailable to remote callers",
       );
     }
+    assertAcpPromptWithinLimit(input.prompt);
+    workspace = await resolveRunnerWorkspace(input, authContext, store.sessions);
+    // Instruction trust binds to the workspace this run actually launches in,
+    // re-resolved here rather than taken on faith from route resolution: the
+    // path can be retargeted (a symlink swapped while the paid preflight was
+    // on screen) between the decision and this point, and a decision about one
+    // directory must never stand for another.
     if (
       input.runner.profile === "codex-chatgpt" &&
-      input.trustWorkspaceInstructions !== true
+      !trustsWorkspaceInstructions(input, dependencies, workspace)
     ) {
       throw new DomainError(CODEX_WORKSPACE_TRUST_REQUIRED);
     }
-    assertAcpPromptWithinLimit(input.prompt);
-    workspace = await resolveRunnerWorkspace(input, authContext, store.sessions);
     bridged = await bindExternalAgentTools({ ...input, workspaceRoot: workspace }, dependencies, {
       parentSessionId: sessionId, traceId, turnRootSpanId: rootSpanId,
       principalId, authContext, abortSignal: input.abortSignal,

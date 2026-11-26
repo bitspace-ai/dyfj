@@ -80,6 +80,8 @@ import {
   type RuntimePolicy,
   unavailableSecretPointers,
   type WorkbenchConfig,
+  WorkspaceProfiles,
+  workspaceProfilePrograms,
 } from "../config/mod.ts";
 import { summarizeError, type WorkbenchSessionEvent } from "../contract/mod.ts";
 import {
@@ -102,8 +104,9 @@ import {
 } from "../tools/mod.ts";
 import { AcpSessionHandleMap } from "../acp-session-map.ts";
 import { composeBoot } from "./boot.ts";
+import { bootToolSections, type PublishServerPorts } from "./boot-tools.ts";
 import { runRuntimeEntry } from "./entry.ts";
-import { installRuntimeSigintHandler } from "./sigint.ts";
+import { composeRuntimeShutdown } from "./shutdown.ts";
 import { AUTOSTARTED_IDLE_GRACE_MS, RuntimeLifetime } from "./lifetime.ts";
 import { createFrictionExtension } from "../extensions/friction/mod.ts";
 import { createIdeaPacketExtensions } from "../extensions/ideas/mod.ts";
@@ -281,6 +284,13 @@ export interface WorkbenchUnixServerOptions {
    * the four `dispatch/*` tools are not registered at all.
    */
   dispatch?: DispatchConfig | DispatchServerOptions;
+  /**
+   * The operator's `[[workspaces]]` profiles (BIT-982): which gate, publish,
+   * sandbox, dispatch and instruction-trust settings apply to a turn's
+   * workspace. Absent, the boot-time sections apply to every workspace, as
+   * they did before profiles existed.
+   */
+  workspaceConfig?: WorkspaceProfiles;
   /** Optional provider HTTP transport override for hermetic server tests. */
   http?: HttpTransport;
   /** Optional socket host override for in-memory server tests. */
@@ -293,38 +303,6 @@ export interface WorkbenchUnixServerOptions {
   storeProbe?: () => Promise<StoreStatus>;
 }
 
-/**
- * The operator's `[publish]` section, parsed and validated once. Absent, the
- * publish tools are not registered: this repository ships no default that
- * would name a private path. A malformed section fails the boot loudly, like
- * every other config section.
- */
-async function bootPublish(): Promise<PublishServerPorts | undefined> {
-  const config = await loadPublishConfig();
-  if (config === null) return undefined;
-  // One registry per runtime, so a ticket and the gate it started outlive the
-  // turn that opened them.
-  console.error("dyfj runtime: publish tools enabled from [publish]");
-  return { config, tickets: new PublishTickets({ ttlMs: config.ticketTtlMs }) };
-}
-
-/**
- * The operator's `[dispatch]` section, parsed and validated once (BIT-907).
- * Absent, the dispatch tools are not registered. A malformed section fails the
- * boot loudly, like every other config section.
- */
-async function bootDispatch(): Promise<DispatchConfig | undefined> {
-  const config = await loadDispatchConfig();
-  if (config === null) return undefined;
-  console.error("dyfj runtime: dispatch tools enabled from [dispatch]");
-  return config;
-}
-
-/** What the server holds for the publish tools across turns. */
-export interface PublishServerPorts {
-  config: PublishConfig;
-  tickets: PublishTickets;
-}
 
 function requireStore(options: WorkbenchUnixServerOptions): Store {
   if (options.store === undefined) {
@@ -495,6 +473,7 @@ function composeTurnRuntime(
   dispatch?: DispatchService,
   http?: HttpTransport,
   gate?: GateRuntimePorts,
+  workspaceConfig?: WorkspaceProfiles,
 ): TurnRuntime {
   const reportExtraPathDropped = codexExtraPathReporter(line => console.error(line));
   const externalAgentRunner: ExternalAgentRunner = {
@@ -510,6 +489,10 @@ function composeTurnRuntime(
         ...(toolBridge === undefined ? {} : { toolBridge }),
         ...(dispatch === undefined ? {} : { dispatch }),
         ...(gate === undefined ? {} : { gate }),
+        // The same resolver the native route reads, so a Codex turn's gate
+        // and dispatch tools come from the section that covers ITS workspace
+        // rather than the boot-time globals (BIT-982).
+        ...(workspaceConfig === undefined ? {} : { workspaceConfig }),
       }),
   };
   // One set of workspace-root anchors per engine: a root anchored by the
@@ -545,6 +528,7 @@ function composeTurnRuntime(
         }),
       ...(dispatch === undefined ? {} : { dispatch }),
       ...(gate === undefined ? {} : { gate }),
+      ...(workspaceConfig === undefined ? {} : { workspaceConfig }),
       externalAgentRunner,
       ...(env === undefined ? {} : { env }),
       ...(policy === undefined ? {} : { policy }),
@@ -675,6 +659,7 @@ export async function serveWorkbenchUnix(
       dispatchService,
       options.http,
       options.gate,
+      options.workspaceConfig,
     );
   const lifetime = new RuntimeLifetime({
     autostarted: options.autostarted === true,
@@ -800,25 +785,29 @@ async function main(): Promise<void> {
     secrets: secretsConfig,
     networkAllow: await loadNetworkAllow(),
     nameserverGrants: await readNameserverNetGrants(),
+    // Every program a `[[workspaces]]` profile's gate or publish commands
+    // name, admitted to the run list here and tagged `workspace-config`: the
+    // policy is composed once, before any turn names a workspace, so a
+    // profile's command would otherwise be refused before it could start.
+    workspacePrograms: workspaceProfilePrograms(config.workspaces),
   });
-  // The tool sandbox, started and probed once. It never throws: a failure
-  // is an `off` sandbox, under which the tools prompt, and the line below
-  // and `runtime/status` say why.
-  const sandboxConfig = await loadSandboxConfig();
-  const sandbox = await bootSandbox({
+  // The operator's tool sections, loaded once: `[gate]`, `[publish]`,
+  // `[dispatch]`, `[sandbox]`, the tool sandbox they configure, and the
+  // workspace-profile resolver that decides which of them applies to a turn's
+  // workspace (BIT-982). A malformed section fails the boot loudly.
+  const {
+    workspaceConfig,
+    sandbox,
+    publish,
+    dispatch,
+    gate,
+  } = await bootToolSections({
+    workspaces: config.workspaces,
+    trustInstructions: config.trustWorkspaceInstructions,
+    policy,
     listenProbe: listenLoopbackProbe,
     env: processEnv,
-    allowDomains: sandboxConfig.allowDomains,
-    denyRead: sandboxConfig.denyRead,
   });
-  console.error(`dyfj runtime: ${describeSandbox(sandbox.status)}`);
-  const publish = await bootPublish();
-  const dispatch = await bootDispatch();
-  const gateConfig = await loadGateConfig();
-  const approvals = await loadApprovalsConfig([GATE_START_APPROVALS]);
-  if (approvals !== null) console.error(`dyfj runtime: [approvals] session_grantable: ${approvals.sessionGrantable.join(", ") || "(none)"}`);
-  const gate = gateConfig === null ? undefined : { config: gateConfig, runs: new GateRuns(), policy, sessionGrantable: approvals?.sessionGrantable };
-  if (gate !== undefined) console.error("dyfj runtime: gate tools enabled from [gate]");
   const externalMcp = await buildExternalMcpCommands(
     mcpServers,
     resolvedSecrets.named,
@@ -848,16 +837,16 @@ async function main(): Promise<void> {
     throw error;
   }
 
-  let resolveCloseServer!: (close: () => Promise<void>) => void;
-  const closeServerReady = new Promise<() => Promise<void>>((resolve) => {
-    resolveCloseServer = resolve;
-  });
-  // What a pending shutdown waits on, for a repeated Ctrl-C to report. Only
-  // the shutdown below advances it.
-  let shutdownStage = "the runtime to finish starting";
-  installRuntimeSigintHandler({
+  // The store (and its pool) belongs to this composition root. It closes once,
+  // after the server, whichever shutdown path runs first.
+  let storeClosed: Promise<void> | undefined;
+  const closeStore = () => (storeClosed ??= store.close());
+
+  // One close order for every path that can stop this runtime: a client's
+  // `runtime/stop`, the autostarted idle stop, and SIGINT.
+  const shutdown = composeRuntimeShutdown({
     autostarted,
-    close: async () => await (await closeServerReady)(),
+    closeStore,
     signals: {
       add: (handler) => {
         process.on("SIGINT", handler);
@@ -865,45 +854,8 @@ async function main(): Promise<void> {
     },
     exit: (code) => process.exit(code),
     say: (line) => console.error(line),
-    waitingOn: () => shutdownStage,
   });
-
-  let serverInstance:
-    | { close(options?: { disconnectPeers?: boolean }): Promise<void> }
-    | undefined;
-
-  const closeRuntime = async (
-    options?: { disconnectPeers?: boolean },
-  ) => {
-    if (serverInstance) await serverInstance.close(options);
-  };
-
-  // The store (and its pool) belongs to this composition root. It closes once,
-  // after the server, whichever shutdown path runs first.
-  let storeClosed: Promise<void> | undefined;
-  const closeStore = () => (storeClosed ??= store.close());
-
-  const shutdown = async (
-    options?: { disconnectPeers?: boolean },
-  ) => {
-    try {
-      shutdownStage =
-        "the server to close its client connections and warm ACP sessions";
-      await closeRuntime(options);
-    } catch (error) {
-      // A closed-resource error from the runtime's own handles is tolerated.
-      // The node:net listener swallows its own close errors, so only a runtime
-      // resource elsewhere in the close path (the runners) can raise it. The
-      // runner leaf of the Node runtime track removes this branch.
-      if (!(error instanceof Error && error.name === "BadResource")) {
-        // The server's close failure is the one to report.
-        await closeStore().catch(() => {});
-        throw error;
-      }
-    }
-    shutdownStage = "the Dolt store's connection pool to close";
-    await closeStore();
-  };
+  shutdown.installSigint();
 
   try {
     const server = await serveWorkbenchUnix(socketPath, {
@@ -919,13 +871,14 @@ async function main(): Promise<void> {
       unavailableSecrets: unavailableSecretPointers(resolvedSecrets),
       externalMcp: externalMcpLines,
       sandbox,
+      ...(workspaceConfig === undefined ? {} : { workspaceConfig }),
       // Bound to the pool this runtime's store already holds, not to a second
       // connection config: one account, one pool, one answer.
       storeProbe: createStoreProbe(pool),
       ...(publish === undefined ? {} : { publish }),
       ...(dispatch === undefined ? {} : { dispatch }),
       ...(gate === undefined ? {} : { gate }),
-      onShutdown: () => shutdown({ disconnectPeers: false }),
+      onShutdown: () => shutdown.shutdown({ disconnectPeers: false }),
       // The same shutdown SIGINT runs: close the server (which reaps the
       // warm ACP sessions and their children), then the store.
       onIdle: async () => {
@@ -936,7 +889,7 @@ async function main(): Promise<void> {
         );
         let code = 0;
         try {
-          await shutdown();
+          await shutdown.shutdown();
         } catch (error) {
           console.error(
             `dyfj runtime: shutdown failed: ${summarizeError(error)}`,
@@ -949,8 +902,7 @@ async function main(): Promise<void> {
         process.exit(code);
       },
     });
-    serverInstance = server;
-    resolveCloseServer(() => shutdown());
+    shutdown.attach(server);
     console.error(
       `dyfj runtime: JSON-RPC over UDS at ${socketPath}  ${
         autostarted
@@ -966,7 +918,7 @@ async function main(): Promise<void> {
       }`,
     );
   } catch (error) {
-    resolveCloseServer(() => Promise.reject(error));
+    shutdown.fail(error);
     await closeStore().catch(() => {});
     throw error;
   }

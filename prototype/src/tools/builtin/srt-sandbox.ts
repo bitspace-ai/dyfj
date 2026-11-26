@@ -22,6 +22,7 @@
  * session grants still apply), and the posture line says so.
  */
 
+import { randomBytes } from "node:crypto";
 import {
   existsSync,
   lstatSync,
@@ -134,7 +135,19 @@ export interface SrtLibrary {
     command: string,
     binShell: string,
     custom: Partial<SandboxRuntimeConfig>,
+    abortSignal?: AbortSignal,
+    options?: { commandId?: string },
   ): Promise<string>;
+  /**
+   * srt's per-command network allow list, which lifts the default deny for one
+   * wrapped command. Only the entry's own command can present its id, so a
+   * workspace's extra domains never widen another workspace's reach.
+   */
+  registerCommandNetworkLists(
+    commandId: string,
+    lists: { allowedDomains?: string[] },
+  ): void;
+  unregisterCommandNetworkLists(commandId: string): void;
   cleanupAfterCommand(): void;
   reset(): Promise<void>;
 }
@@ -143,8 +156,18 @@ const srtLibrary: SrtLibrary = {
   isSupportedPlatform: () => SandboxManager.isSupportedPlatform(),
   checkDependencies: () => SandboxManager.checkDependencies(),
   initialize: (config) => SandboxManager.initialize(config),
-  wrapWithSandbox: (command, binShell, custom) =>
-    SandboxManager.wrapWithSandbox(command, binShell, custom),
+  wrapWithSandbox: (command, binShell, custom, abortSignal, options) =>
+    SandboxManager.wrapWithSandbox(
+      command,
+      binShell,
+      custom,
+      abortSignal,
+      options,
+    ),
+  registerCommandNetworkLists: (commandId, lists) =>
+    SandboxManager.registerCommandNetworkLists(commandId, lists),
+  unregisterCommandNetworkLists: (commandId) =>
+    SandboxManager.unregisterCommandNetworkLists(commandId),
   cleanupAfterCommand: () => SandboxManager.cleanupAfterCommand(),
   reset: () => SandboxManager.reset(),
 };
@@ -168,6 +191,28 @@ export interface BootOptions {
   allowDomains?: readonly string[];
   /** `[sandbox] deny_read` from config.toml: added to the built-in deny list. */
   denyRead?: readonly string[];
+  /**
+   * The extra domains a workspace's own profile adds to its sandbox network
+   * allowlist (`[[workspaces]] sandbox.allow_domains`), resolved per run.
+   *
+   * srt's `network.allowedDomains` is set once at `initialize`, so these cannot
+   * join it: they are registered per command with
+   * `registerCommandNetworkLists`, under an id only that command presents.
+   * A configured `deniedDomains` entry (the GitHub domains) still wins, so a
+   * workspace's list can never reopen one.
+   */
+  allowDomainsFor?: (root: string) => Promise<readonly string[]>;
+  /**
+   * The workspace's own `sandbox.deny_read`, resolved per run. It adds to the
+   * built-in credential list and the global `[sandbox] deny_read`, and can
+   * remove neither.
+   */
+  denyReadFor?: (root: string) => Promise<readonly string[]>;
+  /**
+   * The workspace's own `sandbox.require_worktree`, resolved per run. True
+   * refuses sandboxed git writes in a main checkout for that workspace only.
+   */
+  requireWorktreeFor?: (root: string) => Promise<boolean>;
   srt?: SrtLibrary;
   home?: string;
   readLayout?: GitLayoutReader;
@@ -222,28 +267,63 @@ function createSandbox(
     }
     return pin;
   };
-  const policy = async (root: string) =>
-    compileWorkspacePolicy(root, {
+  const policy = async (root: string) => {
+    // A workspace's restrictive settings fail closed. `require_worktree` and
+    // `deny_read` can only take capability away, so a lookup that fails must
+    // not resolve to the permissive answer: the command is refused rather
+    // than run with the operator's restriction silently dropped. (The extra
+    // ALLOW domains below are the opposite direction and stay conservative:
+    // a failed lookup adds nothing, so the run keeps the narrower allowlist.)
+    const requireWorktree = options.requireWorktreeFor === undefined
+      ? false
+      : await options.requireWorktreeFor(root);
+    const workspaceDeny = options.denyReadFor === undefined
+      ? []
+      : await options.denyReadFor(root);
+    const denyRead = [...(options.denyRead ?? []), ...workspaceDeny];
+    return await compileWorkspacePolicy(root, {
       pinnedLayout: await pinnedLayout(root),
       env: baseEnv,
       ...(options.home === undefined ? {} : { home: options.home }),
-      ...(options.denyRead === undefined
-        ? {}
-        : { extraDenyRead: options.denyRead }),
+      ...(denyRead.length === 0 ? {} : { extraDenyRead: denyRead }),
       ...(options.readLayout === undefined
         ? {}
         : { readLayout: options.readLayout }),
+      ...(requireWorktree ? { requireWorktree: true } : {}),
     });
+  };
+  /** An unguessable per-command attribution key, as srt requires. */
+  const commandId = () => randomBytes(16).toString("base64url");
   const runShell = async (
     command: string,
     run: SandboxRun,
   ): Promise<BoundedResult> => {
     const { filesystem } = await policy(run.root);
-    const wrapped = await srt.wrapWithSandbox(command, "bash", { filesystem });
+    const extraDomains = options.allowDomainsFor === undefined
+      ? []
+      : await options.allowDomainsFor(run.root).catch(() => []);
+    const id = extraDomains.length === 0 ? undefined : commandId();
+    if (id !== undefined) {
+      srt.registerCommandNetworkLists(id, { allowedDomains: [...extraDomains] });
+    }
+    let wrapped: string;
+    try {
+      wrapped = await srt.wrapWithSandbox(
+        command,
+        "bash",
+        { filesystem },
+        undefined,
+        id === undefined ? undefined : { commandId: id },
+      );
+    } catch (error) {
+      if (id !== undefined) srt.unregisterCommandNetworkLists(id);
+      throw error;
+    }
     // srt returns the command unchanged when it has no restriction to
     // apply. Every policy here has some, so an unchanged command means the
     // sandbox did not engage: refuse rather than run it bare.
     if (wrapped === command) {
+      if (id !== undefined) srt.unregisterCommandNetworkLists(id);
       throw new Error("the sandbox did not wrap the command; refusing to run it");
     }
     try {
@@ -258,6 +338,9 @@ function createSandbox(
         ...(run.stdin === undefined ? {} : { stdin: run.stdin }),
       });
     } finally {
+      // Unregister before cleanup: a registration that outlives its command
+      // keeps its id worth presenting.
+      if (id !== undefined) srt.unregisterCommandNetworkLists(id);
       srt.cleanupAfterCommand();
     }
   };
@@ -440,15 +523,31 @@ export function sandboxContainment(sandbox: CommandSandbox): Containment {
 
 /**
  * Returned by the git tool on `add`/`commit`, and appended to a failed
- * sandboxed bash command that mentions `.git`, when the platform's sandbox
- * write-denies the checkout's entire `.git` directory (main checkouts on
- * Linux `bwrap`).
+ * sandboxed bash command that mentions `.git`, when the sandbox write-denies
+ * the checkout's entire `.git` directory: a main checkout on Linux `bwrap`,
+ * or a workspace whose profile sets `sandbox.require_worktree`.
  */
 export const GIT_DIR_DENIED_NOTE =
   "note: this workspace is a main checkout on a platform where the sandbox " +
   "(Linux bubblewrap) denies every write under .git, so sandboxed git add " +
   "and git commit fail here while read-only git operations (status, diff, " +
   "log) still work.";
+
+/** The same note when the refusal is this workspace's own requirement. */
+export const REQUIRE_WORKTREE_NOTE =
+  "note: this workspace's config sets sandbox.require_worktree, so the " +
+  "sandbox denies every write under the main checkout's .git: sandboxed git " +
+  "add and git commit fail here while read-only git operations (status, " +
+  "diff, log) still work. Commit from a linked worktree, or drop " +
+  "require_worktree for this workspace.";
+
+/** The note for a policy's refusal, or null when git writes are allowed. */
+export function gitDirDeniedNote(policy: WorkspacePolicy): string | null {
+  if (!policy.gitDirDenied) return null;
+  return policy.gitDirDeniedBy === "require_worktree"
+    ? REQUIRE_WORKTREE_NOTE
+    : GIT_DIR_DENIED_NOTE;
+}
 
 /** The posture line's sandbox segment. */
 export function describeSandbox(status: SandboxStatus): string {

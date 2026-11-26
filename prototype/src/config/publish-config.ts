@@ -87,6 +87,12 @@ export interface PublishConfig {
    * `expired`; a head change invalidates it sooner.
    */
   ticketTtlMs: number;
+  /**
+   * The base a run's `{range}` is measured from: `<base_ref>...HEAD`. Defaults
+   * to `origin/main`; a repository whose integration branch is named otherwise
+   * sets it (`origin/master`, `origin/develop`, `upstream/main`).
+   */
+  baseRef: string;
   /** Publish the head, if the operator configured a push step. */
   push?: PublishArgv;
   /** Open the pull request, if the operator configured one. */
@@ -161,8 +167,12 @@ export const SHELL_PROGRAMS: readonly string[] = Object.freeze([
 /** A python launcher: `python`, `python3`, `python3.12`, `python3-config`? no. */
 const PYTHON_PROGRAM = /^python(?:\d+(?:\.\d+)*)?$/u;
 
+/** The default base a run's `{range}` is measured from. */
+export const DEFAULT_PUBLISH_BASE_REF = "origin/main";
+
 const PUBLISH_KEYS: ReadonlySet<string> = new Set([
   "pre_gate",
+  "base_ref",
   "gate",
   "report_path",
   "gate_timeout_ms",
@@ -353,6 +363,40 @@ export function defaultPublishReportPath(): string {
   return join(base, "dyfj-publish", "{ticket}.log");
 }
 
+/**
+ * A base ref: a git revision name, passed to the operator's own commands as
+ * `<base_ref>...HEAD`. It is never parsed as a shell word, but it is refused if
+ * it could be read as a flag or carry whitespace, so a value can never become
+ * an option or a second word in a filled argv.
+ */
+function readBaseRef(value: unknown, where: string): string {
+  if (value === undefined) return DEFAULT_PUBLISH_BASE_REF;
+  if (typeof value !== "string" || value === "") {
+    throw new Error(`config: publish.base_ref must be a non-empty string`);
+  }
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u001f\u007f]/u.test(value)) {
+    throw new Error(
+      `config: publish.base_ref must not contain a control character`,
+    );
+  }
+  if (/\s/u.test(value)) {
+    throw new Error(`config: publish.base_ref must not contain whitespace`);
+  }
+  if (isFlagShaped(value)) {
+    throw new Error(`config: publish.base_ref must not begin with "-"`);
+  }
+  if (value.includes("..")) {
+    throw new Error(
+      `config: publish.base_ref must name one revision, not a range`,
+    );
+  }
+  if (Buffer.byteLength(value, "utf8") > MAX_ELEMENT_BYTES) {
+    throw new Error(`config: publish.base_ref is too long`);
+  }
+  return value;
+}
+
 function readReportPath(value: unknown, where: string): string {
   if (value === undefined) return defaultPublishReportPath();
   if (typeof value !== "string" || value === "") {
@@ -439,6 +483,7 @@ export function parsePublishConfig(
     preGate: parsePublishArgv(values["pre_gate"], "pre_gate", where),
     gate: parsePublishArgv(values["gate"], "gate", where),
     reportPath: readReportPath(values["report_path"], where),
+    baseRef: readBaseRef(values["base_ref"], where),
     gateTimeoutMs: readDuration(
       values["gate_timeout_ms"],
       "gate_timeout_ms",
@@ -456,6 +501,19 @@ export function parsePublishConfig(
     ...(push === undefined ? {} : { push }),
     ...(openPr === undefined ? {} : { openPr }),
   });
+}
+
+/**
+ * Whether any configured command names `{implementer}`. A run resolves the
+ * implementing models only when one does: a repository whose gate does not
+ * choose a reviewer from them has no use for the value, and no reason to be
+ * refused when it cannot be resolved.
+ */
+export function publishUsesImplementer(config: PublishConfig): boolean {
+  const commands = [config.preGate, config.gate, config.push, config.openPr];
+  return commands.some((command) =>
+    command?.some((element) => element.includes("{implementer}")) === true
+  );
 }
 
 /** An optional command: absent stays absent, present is parsed like the rest. */

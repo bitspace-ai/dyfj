@@ -64,10 +64,19 @@ function config(overrides: Partial<PublishConfig> = {}): PublishConfig {
     preGate: ["./pre-gate", "--range={range}"],
     gate: ["./gate", "--report={report}", "--head={head}"],
     reportPath: join(ROOT, "reports", "{ticket}.log"),
+    baseRef: "origin/main",
     gateTimeoutMs: 600_000,
     ticketTtlMs: 3_600_000,
     ...overrides,
   };
+}
+
+/** A config whose gate picks its reviewer from {implementer}. */
+function reviewerConfig(overrides: Partial<PublishConfig> = {}): PublishConfig {
+  return config({
+    gate: ["./gate", "--report={report}", "--reviewer-family={implementer}"],
+    ...overrides,
+  });
 }
 
 /** A stub runner: each call resolves with the next scripted result. */
@@ -589,7 +598,7 @@ describe("publish tools: an unresolvable implementer", () => {
     const tickets = new PublishTickets({ ttlMs: 3_600_000 });
     for (
       const command of definePublishTools({
-        config: config(),
+        config: reviewerConfig(),
         tickets,
         policy: composeRuntimePolicy(),
         sessionId: "session-1",
@@ -679,7 +688,7 @@ describe("publish tools: refused before the approval prompt", () => {
     const registry = createCommandRegistry();
     for (
       const command of definePublishTools({
-        config: config(),
+        config: reviewerConfig(),
         tickets,
         policy: composeRuntimePolicy(),
         sessionId: "session-1",
@@ -1061,5 +1070,71 @@ describe("publish tools: push", () => {
     assert.match(textOf(result), /phase: pr-open/);
     assert.deepStrictEqual(runner.calls.map((entry) => entry.argv[0]), ["gh"]);
     assert.strictEqual(reads, 0, "a pushed ticket re-reads no layout");
+  });
+});
+
+describe("publish tools: base_ref and {implementer}", () => {
+  it("fills {range} from the configured base_ref", async () => {
+    const runner = stubRunner([
+      { code: 0, timedOut: false, cancelled: false, output: "", truncated: false, pipesLeftOpen: false },
+      { code: 0, timedOut: false, cancelled: false, output: "", truncated: false, pipesLeftOpen: false },
+    ]);
+    const { registry, tickets } = tools({
+      runner,
+      config: config({
+        preGate: ["./pre-gate", "--range={range}"],
+        gate: ["./gate", "--range={range}"],
+        baseRef: "origin/master",
+      }),
+    });
+    await invoke(registry, call("publish/start"));
+    await settle(tickets);
+    assert.deepStrictEqual(runner.calls[0]?.argv, ["./pre-gate", "--range=origin/master...HEAD"]);
+    assert.deepStrictEqual(runner.calls[1]?.argv, ["./gate", "--range=origin/master...HEAD"]);
+  });
+
+  it("starts a run whose commands never name {implementer} without resolving one", async () => {
+    const runner = stubRunner([
+      { code: 0, timedOut: false, cancelled: false, output: "", truncated: false, pipesLeftOpen: false },
+      { code: 0, timedOut: false, cancelled: false, output: "", truncated: false, pipesLeftOpen: false },
+    ]);
+    const tickets = new PublishTickets({ ttlMs: 3_600_000 });
+    const registry = createCommandRegistry();
+    let resolved = 0;
+    for (
+      const command of definePublishTools({
+        config: config({ preGate: ["./pre-gate"], gate: ["./gate"] }),
+        tickets,
+        policy: composeRuntimePolicy(),
+        sessionId: "session-1",
+        workspaceRoot: ROOT,
+        rootAnchors: new RootAnchors(),
+        readLayout: async () => layoutIn(ROOT),
+        // No implementer is resolvable at all: the run must not need one.
+        resolveImplementer: () => {
+          resolved += 1;
+          return Promise.resolve(undefined);
+        },
+        startCommand: runner.start,
+      })
+    ) {
+      registry.register(command);
+    }
+    const result = await invoke(registry, call("publish/start"));
+    assert.strictEqual(result.isError, false, result.isError ? result.reason : "");
+    await settle(tickets);
+    assert.strictEqual(tickets.latest("session-1")?.phase, "ready");
+    // Never consulted: the commands carry no {implementer}.
+    assert.strictEqual(resolved, 0);
+  });
+
+  it("still refuses a run whose commands name {implementer} and none resolves", async () => {
+    const { registry } = tools({
+      config: config({ gate: ["./gate", "--reviewer-family={implementer}"] }),
+      implementer: "",
+    });
+    const result = await invoke(registry, call("publish/start"));
+    assert.strictEqual(result.isError, true);
+    assert.match(result.isError ? result.reason : "", /\{implementer\}/);
   });
 });

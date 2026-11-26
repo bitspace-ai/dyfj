@@ -37,6 +37,7 @@ describe("publish run: the policy the operator configured", () => {
       preGate: ["./pre-gate"],
       gate: ["./gate"],
       reportPath: "/tmp/{ticket}.log",
+      baseRef: "origin/main",
       gateTimeoutMs: 60_000,
       ticketTtlMs: 60_000,
       push,
@@ -52,6 +53,7 @@ describe("publish run: the policy the operator configured", () => {
       preGate: ["./pre-gate"],
       gate: ["./gate"],
       reportPath: "/tmp/{ticket}.log",
+      baseRef: "origin/main",
       gateTimeoutMs: 60_000,
       ticketTtlMs: 60_000,
     });

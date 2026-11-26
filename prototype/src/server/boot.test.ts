@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { MapEnv } from "../../testing/fakes/map-env.ts";
 import type { RunSecretCommand, SecretsConfig } from "../config/mod.ts";
+import { composeRuntimeGrants } from "../config/mod.ts";
 import { composeBoot } from "./boot.ts";
 
 // Fake pointers and values only; no real resolver runs.
@@ -101,4 +102,45 @@ test("the policy grants the resolver command before any pointer resolves", async
   });
 
   assert.equal(policyAtSpawn, policy);
+});
+
+test("a workspace profile's programs reach the composed run list", async () => {
+  // The policy is composed once, before any turn names a workspace, so a
+  // profile's gate or publish program has to be admitted here: a run list
+  // without it refuses the operator's own command mid-turn, tagged
+  // `workspace-config` so the grant is attributable.
+  const { policy } = await composeBoot({
+    env: new MapEnv(),
+    mcpServers: [],
+    secrets: null,
+    networkAllow: [],
+    nameserverGrants: [],
+    workspacePrograms: ["npm", "./scripts/gate"],
+  });
+
+  assert.ok(policy.run.includes("npm"));
+  assert.ok(policy.run.includes("./scripts/gate"));
+  const grants = composeRuntimeGrants({
+    workspacePrograms: ["npm", "./scripts/gate"],
+  });
+  assert.deepStrictEqual(
+    grants.run
+      .filter((grant) =>
+        grant.sources.some((source) => source.kind === "workspace-config")
+      )
+      .map((grant) => grant.entry),
+    ["npm", "./scripts/gate"],
+  );
+});
+
+test("the run list carries nothing from workspace config when no profile declares a program", async () => {
+  const { policy } = await composeBoot({
+    env: new MapEnv(),
+    mcpServers: [],
+    secrets: null,
+    networkAllow: [],
+    nameserverGrants: [],
+  });
+
+  assert.ok(!policy.run.includes("npm"));
 });

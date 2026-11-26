@@ -14,6 +14,10 @@ import {
   type ExternalAgentWorkbenchRuntimeResult,
 } from "../contract/mod.ts";
 import type { ModelSeed } from "../store/mod.ts";
+import type { WorkspaceConfigResolver } from "../config/mod.ts";
+import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { PaidEscalationDeclinedError } from "./errors.ts";
 import { runWorkbenchRuntime } from "./native-runner.ts";
 import type {
@@ -90,7 +94,11 @@ function recordingRunner(): ExternalAgentRunner & {
 
 function dispatch(
   input: Partial<WorkbenchRuntimeInput>,
-  options: { models?: ModelSeed[]; runner?: ExternalAgentRunner } = {},
+  options: {
+    models?: ModelSeed[];
+    runner?: ExternalAgentRunner;
+    workspaceConfig?: WorkspaceConfigResolver;
+  } = {},
 ) {
   const run = engineServices([], {
     models: [LOCAL_MODEL, ...(options.models ?? [])],
@@ -105,6 +113,9 @@ function dispatch(
     ...(options.runner === undefined
       ? {}
       : { externalAgentRunner: options.runner }),
+    ...(options.workspaceConfig === undefined
+      ? {}
+      : { workspaceConfig: options.workspaceConfig }),
   });
 }
 
@@ -262,4 +273,124 @@ test("allows resumed session turns on the external agent runner", async () => {
     "second turn",
   ]);
   assert.deepStrictEqual(runner.calls[1].sessionId, first.sessionId);
+});
+
+/**
+ * A profile stub: the workspace it covers, and what it declares. Every other
+ * root resolves to the globals the test passes in.
+ */
+function workspaceProfiles(
+  covered: string,
+  profile: { trustInstructions: boolean },
+  globals: { trustInstructions: boolean },
+): { resolver: WorkspaceConfigResolver; asked: () => string[] } {
+  const asked: string[] = [];
+  return {
+    asked: () => asked,
+    resolver: {
+      resolve(workspace: string) {
+        asked.push(workspace);
+        const empty = {
+          gate: null,
+          publish: null,
+          sandbox: { allowDomains: [], denyRead: [] },
+          requireWorktree: false,
+          dispatch: null,
+        };
+        return workspace === covered
+          ? { ...empty, trustInstructions: profile.trustInstructions, profile: null }
+          : { ...empty, trustInstructions: globals.trustInstructions, profile: null };
+      },
+    },
+  };
+}
+
+test("a profile that declines instruction trust refuses the Codex route, whatever the global setting says", async () => {
+  // The bug: the route trust check read only the global setting, so a runtime
+  // with global trust on launched a workspace whose profile declined.
+  const base = await realpath(await mkdtemp(join(tmpdir(), "dyfj-dispatch-")));
+  const declined = join(base, "declined");
+  await mkdir(declined);
+  try {
+    const runner = recordingRunner();
+    const profiles = workspaceProfiles(
+      declined,
+      { trustInstructions: false },
+      { trustInstructions: true },
+    );
+    await assert.rejects(
+      () =>
+        dispatch({
+          runner: { kind: "acp", profile: "codex-chatgpt" },
+          workspaceRoot: declined,
+          trustWorkspaceInstructions: true,
+          approver: { confirmPaidEscalation: APPROVE },
+        }, { runner, workspaceConfig: profiles.resolver }),
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes("codex-chatgpt requires explicit workspace trust"),
+    );
+    assert.deepStrictEqual(runner.calls.length, 0);
+    // The resolved workspace's profile was actually consulted, not the global.
+    assert.ok(profiles.asked().includes(declined));
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
+test("a profile that elevates instruction trust admits the Codex route, whatever the global setting says", async () => {
+  const base = await realpath(await mkdtemp(join(tmpdir(), "dyfj-dispatch-")));
+  const trusted = join(base, "trusted");
+  await mkdir(trusted);
+  try {
+    const runner = recordingRunner();
+    const profiles = workspaceProfiles(
+      trusted,
+      { trustInstructions: true },
+      { trustInstructions: false },
+    );
+    await dispatch({
+      runner: { kind: "acp", profile: "codex-chatgpt" },
+      workspaceRoot: trusted,
+      trustWorkspaceInstructions: false,
+      approver: { confirmPaidEscalation: APPROVE },
+    }, { runner, workspaceConfig: profiles.resolver });
+    assert.deepStrictEqual(runner.calls.length, 1);
+    // The runner is handed the profile's decision, not the caller's flag: the
+    // ACP runtime re-checks trust for itself.
+    assert.strictEqual(runner.calls[0]!.trustWorkspaceInstructions, true);
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
+test("an unmatched workspace keeps the global instruction-trust setting", async () => {
+  const base = await realpath(await mkdtemp(join(tmpdir(), "dyfj-dispatch-")));
+  const trusted = join(base, "trusted");
+  const elsewhere = join(base, "elsewhere");
+  await mkdir(trusted);
+  await mkdir(elsewhere);
+  try {
+    const runner = recordingRunner();
+    const profiles = workspaceProfiles(
+      trusted,
+      { trustInstructions: true },
+      { trustInstructions: false },
+    );
+    await assert.rejects(
+      () =>
+        dispatch({
+          runner: { kind: "acp", profile: "codex-chatgpt" },
+          workspaceRoot: elsewhere,
+          trustWorkspaceInstructions: true,
+          approver: { confirmPaidEscalation: APPROVE },
+        }, { runner, workspaceConfig: profiles.resolver }),
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes("codex-chatgpt requires explicit workspace trust"),
+    );
+    assert.deepStrictEqual(runner.calls.length, 0);
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
 });

@@ -87,6 +87,8 @@ interface TicketRecord extends PublishTicketView {
   cancelHook?: () => void;
   /** True while one call's `open_pr` runs, so a second cannot start another. */
   prInFlight?: boolean;
+  /** This ticket's own lifetime, pinned at issuance. */
+  ttlMs?: number;
 }
 
 /** One registry, owned by the composition root for the runtime's lifetime. */
@@ -110,6 +112,15 @@ export class PublishTickets {
      */
     reportPathFor: (ticket: string) => string;
     trackerIssue?: string;
+    /**
+     * This ticket's own lifetime, from the `[publish]` section that applies to
+     * it: the global one, or the workspace profile's that declared a
+     * `ticket_ttl_ms`. One registry serves every workspace, so the TTL is
+     * pinned per ticket rather than replaced registry-wide - a workspace with a
+     * shorter lifetime retires its own tickets sooner without touching
+     * another's, and a longer one cannot extend anyone else's.
+     */
+    ttlMs?: number;
   }): PublishTicketView {
     const now = this.#now();
     // Expire anything already dead before adding: a session's map stays small.
@@ -127,6 +138,7 @@ export class PublishTickets {
       createdAtMs: now,
       // A copy: the caller's object must not be able to move the pin.
       layout: { ...input.layout },
+      ...(input.ttlMs === undefined ? {} : { ttlMs: input.ttlMs }),
       ...(input.trackerIssue === undefined
         ? {}
         : { trackerIssue: input.trackerIssue }),
@@ -453,7 +465,7 @@ export class PublishTickets {
         record.phase === "expired" || record.phase === "pr-open" ||
         record.phase === "pushing" || record.phase === "pushed"
       ) continue;
-      if (now - record.createdAtMs <= this.#ttlMs) continue;
+      if (now - record.createdAtMs <= (record.ttlMs ?? this.#ttlMs)) continue;
       // A ticket that expires takes its running gate with it: a run whose
       // approval can never be used must not keep a process tree alive.
       const hook = record.cancelHook;

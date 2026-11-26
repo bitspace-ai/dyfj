@@ -126,6 +126,23 @@ export {
   type SandboxConfig,
 } from "./sandbox-config.ts";
 export {
+  loadWorkspacesConfig,
+  parseWorkspacesConfig,
+  type WorkspaceProfile,
+  type WorkspaceSandboxConfig,
+  type WorkspacesConfig,
+  workspaceProfilePrograms,
+} from "./workspaces-config.ts";
+export {
+  type ResolvedWorkspaceConfig,
+  type WorkspaceConfigResolver,
+  type WorkspaceGlobals,
+  dispatchSectionFor,
+  gateSectionFor,
+  publishSectionFor,
+  WorkspaceProfiles,
+} from "./workspace-policy.ts";
+export {
   DEFAULT_DISPATCH_MAX_CHILDREN,
   DEFAULT_DISPATCH_MAX_WAIT_SECONDS,
   type DispatchConfig,
@@ -151,7 +168,9 @@ export {
   MIN_GATE_TIMEOUT_MS,
   MIN_TICKET_TTL_MS,
   parsePublishArgv,
+  DEFAULT_PUBLISH_BASE_REF,
   parsePublishConfig,
+  publishUsesImplementer,
   type PublishArgv,
   type PublishConfig,
   PUBLISH_PLACEHOLDERS,

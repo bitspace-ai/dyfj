@@ -8,9 +8,9 @@
  * (`srt-policy.ts`), and the tool that ships a branch belongs where the
  * operator's own helpers run.
  *
- * `publish/start` runs the worktree's gate on the HOST, outside the sandbox. A
- * sandboxed command can plant code in the worktree, so starting a gate is host
- * execution of worktree code. Host execution is never grantable for a session
+ * `publish/start` runs the workspace's gate on the HOST, outside the sandbox.
+ * A sandboxed command can plant code in the workspace, so starting a gate is
+ * host execution of workspace code. Host execution is never grantable for a session
  * unless the operator lists an eligible command in `[approvals] session_grantable`.
  * `publish/start` is not eligible, so it asks every time; its title warns of host execution. The
  * title is STATIC - it names no commit; the pins a run resolved are shown by
@@ -46,6 +46,7 @@ import type { RuntimePolicy } from "../../config/runtime-policy.ts";
 import {
   type PublishConfig,
   publishReportPathFor,
+  publishUsesImplementer,
   type PublishValues,
 } from "../../config/publish-config.ts";
 import type { Env } from "../../config/mod.ts";
@@ -74,7 +75,7 @@ export { FINDING_LINES, FINDING_LINE_MAX, findingLines } from "./publish-phase.t
 
 /** The one line the start prompt must carry: it is host execution. */
 export const HOST_EXECUTION_WARNING =
-  "runs this worktree's tests on the host, outside the sandbox";
+  "runs this workspace's tests on the host, outside the sandbox";
 
 /** What the publish tools need, resolved once per turn by the engine. */
 export interface PublishToolDeps {
@@ -143,12 +144,13 @@ function placeholdersFor(
     implementer: string;
   },
   ticket: string,
+  baseRef: string,
 ): PublishValues {
   return {
     repo: facts.repository,
     branch: facts.branch ?? "",
     head: facts.head ?? "",
-    range: "origin/main...HEAD",
+    range: `${baseRef}...HEAD`,
     issue: facts.issue ?? "",
     implementer: facts.implementer,
     report: "",
@@ -160,6 +162,24 @@ function placeholdersFor(
 type StartPins =
   | { readonly layout: GitLayout; readonly implementer: string }
   | { readonly refusal: string };
+
+/** The implementing models a run needs: none when the commands never ask. */
+async function resolveImplementerOrEmpty(
+  deps: PublishToolDeps,
+): Promise<string | { readonly refusal: string }> {
+  // A repository whose commands carry no {implementer} has no use for the
+  // value, so an unresolvable session is not a reason to refuse its run.
+  if (!publishUsesImplementer(deps.config)) return "";
+  const implementer = await deps.resolveImplementer(deps.sessionId);
+  if (implementer === undefined || implementer === "") {
+    return {
+      refusal: "this session's implementing models cannot be resolved from " +
+        "its own record, so {implementer} would be empty; publish/start " +
+        "refuses rather than hand the gate an unknown implementer",
+    };
+  }
+  return implementer;
+}
 
 /**
  * Resolve what a run needs before it can start: the session workspace as an
@@ -175,7 +195,7 @@ type StartPins =
 async function resolveStartPins(deps: PublishToolDeps): Promise<StartPins> {
   const readLayout = deps.readLayout ?? readPublishGitLayout;
   // The root is the one this turn resolved and anchored, never a path read out
-  // of the worktree.
+  // of the workspace.
   const root = await deps.rootAnchors.verify(deps.workspaceRoot);
   let layout: GitLayout;
   try {
@@ -193,18 +213,13 @@ async function resolveStartPins(deps: PublishToolDeps): Promise<StartPins> {
       refusal: "the session workspace is not on a branch with a commit to gate",
     };
   }
-  // The operator's gate picks a different-family reviewer from this list, so it
-  // is read from the runtime's own event log rather than the worktree. An
-  // unresolvable answer refuses the run: a gate told nothing about who
+  // A gate that picks a different-family reviewer reads that family from this
+  // list, which is why it comes from the runtime's own event log rather than
+  // the workspace. Only a command that names {implementer} needs it: an
+  // unresolvable answer refuses that run, since a gate told nothing about who
   // implemented cannot pick a different reviewer.
-  const implementer = await deps.resolveImplementer(deps.sessionId);
-  if (implementer === undefined || implementer === "") {
-    return {
-      refusal: "this session's implementing models cannot be resolved from " +
-        "its own record, so {implementer} would be empty; publish/start " +
-        "refuses rather than hand the gate an unknown implementer",
-    };
-  }
+  const implementer = await resolveImplementerOrEmpty(deps);
+  if (typeof implementer !== "string") return implementer;
   return { layout, implementer };
 }
 
@@ -231,6 +246,10 @@ async function startPublishRun(
   const created = deps.tickets.create({
     sessionId: deps.sessionId,
     layout,
+    // The lifetime of the section this run's workspace resolved to: one
+    // registry serves every workspace, so it is pinned here rather than
+    // replacing the registry's own (PublishTickets).
+    ttlMs: deps.config.ticketTtlMs,
     // The default path names the ticket, so it is filled from the id this
     // module just minted.
     reportPathFor: (ticket) =>
@@ -245,6 +264,7 @@ async function startPublishRun(
             implementer,
           },
           ticket,
+          deps.config.baseRef,
         ),
       ),
     ...(issue === undefined ? {} : { trackerIssue: issue as string }),
@@ -491,7 +511,7 @@ export function definePublishTools(
       "Start a publish run for this session's branch: resolve the repository, " +
       "branch and commit host-side, then run the operator's pre-gate and gate " +
       "in the background and return a ticket. It " +
-      `${HOST_EXECUTION_WARNING}: the gate runs the worktree's own code with ` +
+      `${HOST_EXECUTION_WARNING}: the gate runs the workspace's own code with ` +
       "the runtime's privileges, so this asks every time and is never granted " +
       "for a session. Poll with publish/status; a gate takes minutes. This tool " +
       "does not push or open a pull request itself; what the configured " +

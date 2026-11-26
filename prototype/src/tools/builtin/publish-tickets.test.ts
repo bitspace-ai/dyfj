@@ -278,6 +278,42 @@ describe("publish tickets: the push and the pull request", () => {
 });
 
 describe("publish tickets: lifetime", () => {
+  it("pins a ticket's own TTL over the registry's, shorter or longer", () => {
+    // A workspace profile may set its own `[publish] ticket_ttl_ms`. The one
+    // registry holds every workspace's tickets, so the TTL is pinned per
+    // ticket: a shorter profile tightens that ticket only, and a longer one
+    // never expires another workspace's ticket early.
+    const { tickets, advance } = registry({ ttlMs: 60_000 });
+    const global = create(tickets);
+    const short = tickets.create({
+      sessionId: "s1",
+      layout: LAYOUT,
+      reportPathFor: (ticket) => `/tmp/report-${ticket}.log`,
+      ttlMs: 1_000,
+    });
+    const long = tickets.create({
+      sessionId: "s1",
+      layout: LAYOUT,
+      reportPathFor: (ticket) => `/tmp/report-${ticket}.log`,
+      ttlMs: 120_000,
+    });
+    // Past the shorter profile's lifetime, but not the registry's.
+    advance(1_001);
+    assert.strictEqual(tickets.get("s1", short.ticket)?.phase, "expired");
+    assert.match(
+      tickets.get("s1", short.ticket)?.reason ?? "",
+      /outlived/,
+    );
+    assert.strictEqual(tickets.get("s1", global.ticket)?.phase, "pre-gate");
+    assert.strictEqual(tickets.get("s1", long.ticket)?.phase, "pre-gate");
+    // The global ticket keeps the registry's TTL.
+    advance(59_000);
+    assert.strictEqual(tickets.get("s1", global.ticket)?.phase, "expired");
+    // The longer profile's ticket is still usable past it.
+    assert.strictEqual(tickets.get("s1", long.ticket)?.phase, "pre-gate");
+    assert.notStrictEqual(tickets.markGated("s1", long.ticket), null);
+  });
+
   it("never expires a ticket whose push is in flight or done", () => {
     const { tickets, advance } = registry({ ttlMs: 5_000 });
     const inFlight = pushing(tickets);

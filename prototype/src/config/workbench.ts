@@ -14,6 +14,10 @@
  */
 
 import { readCodexEnvironmentConfig } from "./codex-environment.ts";
+import {
+  parseWorkspacesConfig,
+  type WorkspacesConfig,
+} from "./workspaces-config.ts";
 import { parseDispatchConfig } from "./dispatch-config.ts";
 import {
   type OpenRouterConfig,
@@ -143,6 +147,12 @@ export interface WorkbenchConfig {
    */
   compressionTriggerTokens: number | null;
   /**
+   * The operator's `[[workspaces]]` profiles: per-repository gate, publish,
+   * sandbox, dispatch and instruction-trust settings. Empty leaves the flat
+   * sections as the only configuration, exactly as before profiles existed.
+   */
+  workspaces: WorkspacesConfig;
+  /**
    * Expanded absolute path to the operator's global instructions file
    * ([context] operator_instructions / DYFJ_OPERATOR_INSTRUCTIONS), injected
    * into native loopback companion turns. Null leaves it unset (no-op).
@@ -187,6 +197,9 @@ export const CONFIG_DEFAULTS: WorkbenchConfig = {
   openRouterConfig: null,
   compressionTriggerTokens: null,
   operatorInstructions: null,
+  // Replaced by `loadConfig` from the same parsed file; a bare default has no
+  // profiles, so no workspace is matched and the flat sections apply.
+  workspaces: parseWorkspacesConfig(null, "config.toml"),
 };
 
 function validateCodexToolTimeout(value: number, source: string): number {
@@ -497,6 +510,7 @@ export async function loadConfig(
     }
     applyCodexFileConfig(config, table, configLabel(path));
     config.openRouterConfig = parseOpenRouterConfig(table, path);
+    config.workspaces = parseWorkspacesConfig(table, path, env);
     const fileCompressionTrigger = readNumber(
       table,
       "context",

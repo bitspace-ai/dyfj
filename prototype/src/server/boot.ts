@@ -29,6 +29,14 @@ export interface BootInputs {
   secrets: SecretsConfig | null;
   networkAllow: readonly string[];
   nameserverGrants: readonly string[];
+  /**
+   * The programs the operator's `[[workspaces]]` profiles declare in their
+   * gate and publish commands (`workspaceProfilePrograms`). The policy is
+   * composed once, before any turn names a workspace, so every declared
+   * program is admitted here and tagged `workspace-config`; which one a turn
+   * may start is still decided by that turn's own gate or publish policy.
+   */
+  workspacePrograms?: readonly string[];
   /** The resolver command runner; the real spawn when absent. */
   runSecretCommand?: RunSecretCommand;
   log?: (message: string) => void;
@@ -51,6 +59,9 @@ export async function composeBoot(inputs: BootInputs): Promise<Boot> {
     secrets: inputs.secrets,
     nodePath: nodePath?.startsWith("/") === true ? nodePath : null,
     dolt: resolveDoltEndpoint(env),
+    ...(inputs.workspacePrograms === undefined
+      ? {}
+      : { workspacePrograms: inputs.workspacePrograms }),
   });
   const resolvedSecrets = await resolveSecrets(inputs.secrets, {
     env,
