@@ -706,11 +706,26 @@ function dsmlCandidateDecision(
       : "none";
   }
   if (wrapper.tag.closing || !isWrapperName(wrapper.tag.name)) return "none";
-  const invokeAt = nextDsmlTagStart(text, wrapper.end);
-  if (invokeAt < 0) return undecided();
-  const invoke = parseDsmlTag(text, invokeAt);
+  // Read the first invoke exactly where `scanDsmlBlock` reads it: after the
+  // wrapper's own whitespace and nowhere else. Searching ahead for the next tag
+  // instead let a wrapper mentioned in prose borrow an invoke further down the
+  // reply, so a stray mention read as recoverable and the prose between them
+  // was withheld to the finish.
+  let i = wrapper.end;
+  while (
+    i < text.length && isDsmlSpace(text[i]) &&
+    i - wrapper.end < MAX_TEXT_TOOL_WRAPPER_WHITESPACE
+  ) i++;
+  if (
+    i - wrapper.end >= MAX_TEXT_TOOL_WRAPPER_WHITESPACE && i < text.length &&
+    isDsmlSpace(text[i])
+  ) return "none";
+  if (i >= text.length) return undecided();
+  const invoke = parseDsmlTag(text, i);
   if (!invoke.ok) {
     if (!invoke.truncated) return "none";
+    // A closing tag the text ends inside is not an invoke on its way.
+    if (invoke.partial?.closing === true) return "none";
     const pending = pendingInvokeName(invoke.partial);
     if (pending === undefined) return undecided();
     return [...offeredNames].some((offered) => offered.startsWith(pending))

@@ -25,6 +25,7 @@ import {
   dsmlChunksAt,
   dsmlPartialBlock,
   dsmlBlock,
+  dsmlCloseTag,
   dsmlTag,
   qwenUnrecoverableBashBlock,
 } from "../../../testing/providers/dsml-fixtures.ts";
@@ -1446,7 +1447,98 @@ describe("finish strip and presenter agree on one candidate rule", () => {
     assert.strictEqual(result.text, `${markers}${DSML_BASH_BLOCK}`);
   });
 
-  // A closed wrapper whose body is not valid DSML can still hold a complete
+  // A wrapper opening is a candidate only when the thing the dialect puts next
+// follows it: its own whitespace and then an invoke. Searching ahead for the
+// next tag instead let a wrapper *mentioned in prose* borrow an invoke further
+// down the reply, so the mention read as recoverable and everything between
+// them was withheld to the finish (BIT-991).
+describe("a DSML wrapper candidate reads only its own whitespace", () => {
+  const streamOf = async (chunks: readonly string[], toolNames: string[]) => {
+    const deltas: string[] = [];
+    const transport = new ScriptedHttpTransport([{
+      respond: {
+        body: sse([
+          ...chunks.map((content) => ({ choices: [{ delta: { content } }] })),
+          { choices: [{ delta: {}, finish_reason: "stop" }] },
+        ]),
+      },
+    }]);
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "continue",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      tools: toolNames.map(dsmlTool),
+      onTextDelta: (delta) => deltas.push(delta),
+      fetchFn: transport.fetch,
+    });
+    transport.assertDone();
+    return { result, deltas };
+  };
+  const wrapper = dsmlTag("spaced", "calls");
+  const invoke = dsmlTag("spaced", "invoke", ' name="bash"');
+
+  it("does not withhold prose between a stray wrapper and a later invoke", async () => {
+    const prose = Array.from(
+      { length: 60 },
+      () => "the wrapper is written like this. ",
+    ).join("");
+    const text = `Notes: ${wrapper}${prose}${invoke}\nstill prose`;
+    const words = text.match(/\S+\s*/g) ?? [];
+    const { result, deltas } = await streamOf(words, ["bash"]);
+
+    assert.strictEqual(result.toolCalls, undefined);
+    assert.strictEqual(result.text, text);
+    assert.strictEqual(deltas.join(""), text);
+    // The wrapper and the prose after it are forwarded as they arrive, not
+    // held back to the finish: nearly every word is its own delta.
+    assert.ok(
+      deltas.length >= words.length - 5,
+      `${deltas.length} deltas for ${words.length} words`,
+    );
+    assert.strictEqual(deltas[0], "Notes: ");
+  });
+
+  it("is prose when the gap after the wrapper is past the whitespace bound", async () => {
+    const text = `${wrapper}${" ".repeat(40)}${invoke}\nstill prose`;
+    const words = text.match(/\S+\s*/g) ?? [];
+    const { result, deltas } = await streamOf(words, ["bash"]);
+
+    assert.strictEqual(result.toolCalls, undefined);
+    assert.strictEqual(result.text, text);
+    assert.strictEqual(deltas.join(""), text);
+    // Past the gap bound nothing may still be pending, so the words after the
+    // wrapper are forwarded as they arrive rather than held to the finish.
+    assert.ok(
+      deltas.length >= words.length - 2,
+      `${deltas.length} deltas for ${words.length} words`,
+    );
+  });
+
+  it("still withholds a split invoke opening after the wrapper's whitespace", async () => {
+    const block = `${wrapper}   ${invoke}\n` +
+      `${dsmlTag("spaced", "parameter", ' name="command" string="true"')}` +
+      `${DSML_BASH_COMMAND}` +
+      `${dsmlCloseTag("spaced", "parameter")}\n` +
+      `${dsmlCloseTag("spaced", "invoke")}\n` +
+      `${dsmlCloseTag("spaced", "calls")}`;
+    const split = 3;
+    const head = block.slice(0, block.indexOf(invoke) + split);
+    const { result, deltas } = await streamOf([head, block.slice(head.length)], [
+      "bash",
+    ]);
+
+    assert.deepStrictEqual(result.toolCalls, [{
+      id: "text-tool-1",
+      name: "bash",
+      arguments: { command: DSML_BASH_COMMAND },
+    }]);
+    assert.strictEqual(result.text, "");
+    assert.strictEqual(deltas.join(""), "");
+  });
+});
+
+// A closed wrapper whose body is not valid DSML can still hold a complete
   // offered Qwen call. The reader withholds the block, then finds on the
   // wrapper's close tag that it is not DSML and releases the span as prose -
   // but the Qwen call inside it runs, so showing its markup would print a call

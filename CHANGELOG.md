@@ -49,20 +49,23 @@ README are tracked separately in its Revision history section.
   waiting for the stream to end. A block is only withheld while it may still
   turn out recoverable: once a candidate block has grown past the bound a
   wrapper and its invoke tag fit in, it is prose and the reader releases it, so
-  markup-shaped text in ordinary prose costs no more than that bound. Every
-  scan stays linear and bounded: the marker counted is the separator-wrapped
-  run that opens a tag, not the bare element name, so a reply that discusses
-  the dialect in prose spends none of the bound and only separator-wrapped runs
-  do, overlapping runs included so the count does not depend on how the reply
-  is chunked; that count is capped at the same per-element candidate limit as
-  the Qwen dialect scaled to that dialect's tokens per element, a withheld
-  block's chunks are held in an array and only a carried tail window plus the
-  newly arrived characters is probed for the close tag, so wall-clock time
-  stays linear across tens of thousands of deltas, the block's end is read once
-  per block rather than once per delta, the presenter scans only the text it
-  has not decided yet rather than the whole reply at each delta, and the
-  whole-text scan keeps the accepted-response bound. The bounds, the
-  argument-budget helper and its coercion moved into
+  markup-shaped text in ordinary prose costs no more than that bound. A
+  candidate reads only the whitespace the dialect allows between a wrapper and
+  its first invoke, rather than searching the rest of the reply for a tag: a
+  wrapper quoted in prose cannot borrow an invoke written further down and hold
+  the text between them back. Every scan stays linear and bounded: the marker
+  counted is the separator-wrapped run that opens a tag, not the bare element
+  name, so a reply that discusses the dialect in prose spends none of the bound
+  and only separator-wrapped runs do, overlapping runs included so the count
+  does not depend on how the reply is chunked; that count is capped at the same
+  per-element candidate limit as the Qwen dialect scaled to that dialect's
+  tokens per element, a withheld block's chunks are held in an array and only a
+  carried tail window plus the newly arrived characters is probed for the close
+  tag, so wall-clock time stays linear across tens of thousands of deltas, the
+  block's end is read once per block rather than once per delta, the presenter
+  scans only the text it has not decided yet rather than the whole reply at
+  each delta, and the whole-text scan keeps the accepted-response bound. The
+  bounds, the argument-budget helper and its coercion moved into
   `providers/shared/text-markup-bounds.ts` and
   `providers/shared/text-markup-arguments.ts` so no module in the recovery path
   grows past the module-size limit. The Qwen `<tool_call>` reading keeps the
