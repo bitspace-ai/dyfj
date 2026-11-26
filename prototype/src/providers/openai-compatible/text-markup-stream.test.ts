@@ -13,14 +13,16 @@ import {
   DSML_BASH_COMMAND,
   DSML_GATE_RUN,
   DSML_GATE_WAIT_BLOCK,
+  DSML_INVALID_OFFERED_BLOCK,
+  DSML_PIPE,
   DSML_PROSE,
+  DSML_UNOFFERED_FIRST_TRUNCATED_SECOND_BLOCK,
+  DSML_WITHHELD_UNOFFERED_SECOND_BLOCK,
   dsmlBlock,
   dsmlCharacterChunks,
   dsmlChunksAt,
   dsmlPartialBlock,
   dsmlTag,
-  DSML_INVALID_OFFERED_BLOCK,
-  DSML_PIPE,
 } from "../../../testing/providers/dsml-fixtures.ts";
 
 const models = [...providerTestModels];
@@ -980,8 +982,8 @@ describe("DeepSeek DSML markup split across deltas", () => {
 
 // A reply can hold markup-shaped prose as well as a real block: prose that
 // mentions the wrapper opener, a block naming an offered tool that is not
-// recoverable markup, or both in either order. None of those may make the
-// present a turn fails, and none may leave a recovered block visible or
+// recoverable markup, or both in either order. None of those may fail the
+// turn's presentation, and none may leave a recovered block visible or
 // flagged (BIT-991).
 describe("markup-shaped prose beside a recovered DSML block", () => {
   const streamOf = async (chunks: readonly string[], toolNames: string[]) => {
@@ -1097,5 +1099,169 @@ describe("markup-shaped prose beside a recovered DSML block", () => {
       count: 1,
       countIsLowerBound: false,
     });
+  });
+});
+
+// The finish strip and the streaming presenter apply one per-candidate rule:
+// a candidate is withheld (and so cut at finish) only while its *first* invoke
+// names an offered tool, or while no invoke name has arrived yet and the
+// candidate is still undecided. A block whose first invoke names an unoffered
+// tool is prose the presenter already forwarded, even when a later invoke the
+// reply cuts off inside would prefix an offered name, so the strip must leave
+// it alone (BIT-991).
+describe("finish strip and presenter agree on one candidate rule", () => {
+  const streamOf = async (chunks: readonly string[], toolNames: string[]) => {
+    const deltas: string[] = [];
+    const transport = new ScriptedHttpTransport([{
+      respond: {
+        body: sse([
+          ...chunks.map((content) => ({ choices: [{ delta: { content } }] })),
+          { choices: [{ delta: {}, finish_reason: "stop" }] },
+        ]),
+      },
+    }]);
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "continue",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      tools: toolNames.map(dsmlTool),
+      onTextDelta: (delta) => deltas.push(delta),
+      fetchFn: transport.fetch,
+    });
+    transport.assertDone();
+    return { result, deltas };
+  };
+  const bashCall = {
+    id: "text-tool-1",
+    name: "bash",
+    arguments: { command: DSML_BASH_COMMAND },
+  };
+  const forwardedProse = ` then ${DSML_UNOFFERED_FIRST_TRUNCATED_SECOND_BLOCK}`;
+
+  it("P1: keeps a forwarded unoffered block whose later invoke is cut off", async () => {
+    const { result, deltas } = await streamOf(
+      [DSML_BASH_BLOCK, " then ", DSML_UNOFFERED_FIRST_TRUNCATED_SECOND_BLOCK],
+      ["bash"],
+    );
+
+    assert.deepStrictEqual(result.toolCalls, [bashCall]);
+    assert.strictEqual(result.text, forwardedProse);
+    assert.strictEqual(deltas.join(""), result.text);
+    assert.deepStrictEqual(result.unparsedToolCallMarkup, {
+      count: 1,
+      countIsLowerBound: false,
+    });
+  });
+
+  it("P1: keeps it when the whole reply arrives in one delta", async () => {
+    const { result, deltas } = await streamOf(
+      [`${DSML_BASH_BLOCK} then ${
+        DSML_UNOFFERED_FIRST_TRUNCATED_SECOND_BLOCK
+      }`],
+      ["bash"],
+    );
+
+    assert.deepStrictEqual(result.toolCalls, [bashCall]);
+    assert.strictEqual(result.text, forwardedProse);
+    assert.strictEqual(deltas.join(""), result.text);
+  });
+
+  it("P1: keeps it when the operator aborts before any block is recovered", async () => {
+    const abortController = new AbortController();
+    const deltas: string[] = [];
+    let received!: () => void;
+    const sawText = new Promise<void>((resolve) => {
+      received = resolve;
+    });
+    const text = `x ${DSML_UNOFFERED_FIRST_TRUNCATED_SECOND_BLOCK}`;
+    const transport = new ScriptedHttpTransport([{
+      respond: {
+        body: `data: ${
+          JSON.stringify({ choices: [{ delta: { content: text } }] })
+        }\n`,
+        holdOpen: true,
+      },
+    }]);
+    const pending = runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "go on",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      abortSignal: abortController.signal,
+      tools: [dsmlTool("bash")],
+      onTextDelta: (delta) => {
+        deltas.push(delta);
+        received();
+      },
+      fetchFn: transport.fetch,
+    });
+
+    await sawText;
+    abortController.abort();
+    const result = await pending;
+    transport.assertDone();
+
+    assert.strictEqual(result.text, text);
+    assert.strictEqual(deltas.join(""), result.text);
+    assert.strictEqual(result.toolCalls, undefined);
+  });
+
+  it("P2: drops a withheld block whose second invoke is unoffered", async () => {
+    const { result, deltas } = await streamOf(
+      [`before ${DSML_WITHHELD_UNOFFERED_SECOND_BLOCK}`],
+      ["bash"],
+    );
+
+    assert.strictEqual(result.text, "before ");
+    assert.strictEqual(deltas.join(""), "before ");
+    assert.strictEqual(result.toolCalls, undefined);
+    assert.strictEqual(result.unparsedToolCallMarkup, undefined);
+  });
+
+  /**
+   * A block the reply never closes stays withheld to the end, which is the
+   * shape that made wall-clock time superlinear: a growing withheld string was
+   * flattened by V8 on every close-tag probe. The presenter holds withheld
+   * chunks in an array and probes only a carried tail window, so four times the
+   * deltas must not cost more than a roughly linear multiple.
+   */
+  const measureWithheld = async (deltaCount: number) => {
+    const block = `${
+      dsmlTag("spaced", "calls")
+    }\n${dsmlTag("spaced", "invoke", ' name="bash"')}\n${
+      dsmlTag("spaced", "parameter", ' name="command" string="true"')
+    }${"x".repeat(deltaCount * 5)}`;
+    const chunks: string[] = [];
+    for (let i = 0; i < block.length; i += 5) chunks.push(block.slice(i, i + 5));
+    const started = performance.now();
+    const { result, deltas } = await streamOf(chunks, ["bash"]);
+    const elapsed = performance.now() - started;
+    assert.strictEqual(result.text, "");
+    assert.strictEqual(deltas.join(""), "");
+    return elapsed;
+  };
+
+  it("scales linearly across tens of thousands of withheld deltas", async () => {
+    await measureWithheld(1_000);
+    const small = await measureWithheld(5_000);
+    const large = await measureWithheld(20_000);
+    // Four times the deltas; a presenter that rebuilt the withheld span at each
+    // probe would land near sixteen times the cost.
+    assert.ok(
+      large < Math.max(small, 1) * 12,
+      `small ${small.toFixed(1)}ms large ${large.toFixed(1)}ms`,
+    );
+  });
+
+  it("P2: drops it when every character arrives in its own delta", async () => {
+    const { result, deltas } = await streamOf(
+      ["before ", ...dsmlCharacterChunks(DSML_WITHHELD_UNOFFERED_SECOND_BLOCK)],
+      ["bash"],
+    );
+
+    assert.strictEqual(result.text, "before ");
+    assert.strictEqual(deltas.join(""), "before ");
+    assert.strictEqual(result.toolCalls, undefined);
   });
 });

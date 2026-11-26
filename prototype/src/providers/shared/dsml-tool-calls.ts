@@ -336,7 +336,7 @@ function parseDsmlTag(text: string, at: number): DsmlTagParse {
 }
 
 /** One recovered call and the block it came from. */
-export interface DsmlRecoveredCall {
+interface DsmlRecoveredCall {
   name: string;
   arguments: Record<string, unknown>;
 }
@@ -610,7 +610,7 @@ export function dsmlBlockEnd(text: string, from: number): number {
 }
 
 /** One recovered block of markup and the calls it held. */
-export interface DsmlToolCallRemoval {
+interface DsmlToolCallRemoval {
   /** Index of the wrapper opening. */
   start: number;
   /** Index just past the wrapper's closing tag. */
@@ -618,7 +618,7 @@ export interface DsmlToolCallRemoval {
   calls: DsmlRecoveredCall[];
 }
 
-export interface DsmlToolCallExtraction {
+interface DsmlToolCallExtraction {
   /** Spans to remove from the text, in order, one per recovered block. */
   removals: DsmlToolCallRemoval[];
   /** A block named an offered tool but its arguments could not be read. */
@@ -659,21 +659,71 @@ export function extractDsmlToolCalls(
 }
 
 /**
+ * How a streaming reader treats a DSML wrapper opening at one position:
+ *
+ * - `recoverable`: the block's first invoke already names an offered tool, so
+ *   recovery would run it if it arrived whole. A reader withholds from here
+ *   whether the block is complete or not.
+ * - `undecided`: no invoke name is revealed yet, or only a partial one that
+ *   prefixes an offered tool, and the candidate is still within
+ *   `MAX_DSML_UNDECIDED_PREFIX`, so it may yet become recoverable. A reader
+ *   withholds from here while it waits, and stops once the bound passes.
+ * - `none`: prose, or a block that names a tool the caller did not offer, or a
+ *   candidate that stayed undecided past the bound.
+ *
+ * Both the streaming presenter and the finish strip read *this* function, so
+ * the block a reader withheld is the block the strip cuts: they cannot drift
+ * apart into cutting text that was already forwarded.
+ */
+type DsmlCandidateDecision = "recoverable" | "undecided" | "none";
+
+/**
+ * Decide one wrapper-opening candidate. Only the block's *first* invoke names a
+ * tool; a later invoke decides nothing, because recovery runs a block only when
+ * every invoke names an offered tool and the reader withholds on the first one
+ * alone.
+ */
+function dsmlCandidateDecision(
+  text: string,
+  at: number,
+  offeredNames: ReadonlySet<string>,
+): DsmlCandidateDecision {
+  const undecided = (): DsmlCandidateDecision =>
+    text.length - at <= MAX_DSML_UNDECIDED_PREFIX ? "undecided" : "none";
+  const wrapper = parseDsmlTag(text, at);
+  if (!wrapper.ok) {
+    return wrapper.truncated && wrapper.partial !== undefined &&
+        !wrapper.partial.closing && couldBecomeWrapper(wrapper.partial)
+      ? undecided()
+      : "none";
+  }
+  if (wrapper.tag.closing || !isWrapperName(wrapper.tag.name)) return "none";
+  const invokeAt = nextDsmlTagStart(text, wrapper.end);
+  if (invokeAt < 0) return undecided();
+  const invoke = parseDsmlTag(text, invokeAt);
+  if (!invoke.ok) {
+    if (!invoke.truncated) return "none";
+    const pending = pendingInvokeName(invoke.partial);
+    if (pending === undefined) return undecided();
+    return [...offeredNames].some((offered) => offered.startsWith(pending))
+      ? "recoverable"
+      : "none";
+  }
+  if (invoke.tag.closing || invoke.tag.name !== "invoke") return "none";
+  const name = invoke.tag.attributes.name;
+  if (name === undefined || name.length === 0) return undecided();
+  return offeredNames.has(name) ? "recoverable" : "none";
+}
+
+/**
  * The index of the earliest DSML markup the text cuts off while a streaming
- * reader could still be withholding it, or -1. Two shapes qualify, and each
- * mirrors the withholding rule a reader applies delta by delta, so a caller
- * that strips this suffix never cuts text it has already forwarded:
- *
- * - the text ends inside a wrapper opening that could still become one, or a
- *   whole wrapper opening with no invoke revealed after it, and the span is
- *   within `MAX_DSML_UNDECIDED_PREFIX` (the reader withholds it only that far);
- * - the block revealed an invoke naming an offered tool and then the text
- *   ended, whether inside an invoke name that only prefixes an offered one or
- *   past a whole invoke whose name is offered (the reader withholds that
- *   unconditionally, because recovery would run it if it had arrived whole).
- *
- * A block that closed but did not follow the dialect is prose the reader
- * already released, and it is never reported here.
+ * reader could still be withholding it, or -1. A candidate qualifies exactly
+ * when `dsmlCandidateDecision` reads it as `recoverable` or `undecided`, which
+ * is the set the presenter withholds from, so a caller that strips this suffix
+ * never cuts text it already forwarded. A block that arrived whole and simply
+ * did not follow the dialect is prose the reader released, and a complete
+ * recoverable block was already removed by recovery, so both are stepped over
+ * by their end rather than examined tag by tag.
  */
 export function dsmlTruncatedBlockStart(
   text: string,
@@ -684,35 +734,30 @@ export function dsmlTruncatedBlockStart(
   let candidates = 0;
   while (at >= 0 && candidates < MAX_TEXT_TOOL_MARKUP_CANDIDATES) {
     candidates += 1;
-    const undecided = text.length - at <= MAX_DSML_UNDECIDED_PREFIX;
     const wrapper = parseDsmlTag(text, at);
-    if (!wrapper.ok) {
-      if (
-        wrapper.truncated && wrapper.partial !== undefined &&
-        !wrapper.partial.closing && couldBecomeWrapper(wrapper.partial) &&
-        undecided
-      ) return at;
+    if (!wrapper.ok || wrapper.tag.closing) {
       at = nextDsmlTagStart(text, at + 1);
       continue;
     }
-    if (wrapper.tag.closing || !isWrapperName(wrapper.tag.name)) {
+    if (!isWrapperName(wrapper.tag.name)) {
       at = nextDsmlTagStart(text, at + 1);
       continue;
     }
     const scan = scanDsmlBlock(text, at);
+    if (scan.complete) {
+      // A whole block is not truncated markup; step past all of it so its own
+      // tags do not each count against the candidate bound.
+      at = nextDsmlTagStart(text, scan.end);
+      continue;
+    }
     if (!scan.truncated) {
+      // The block did not follow the dialect, so it is prose the presenter
+      // released; the length-based part of the decision below would otherwise
+      // read a stray opener near the end of the reply as still pending.
       at = nextDsmlTagStart(text, at + 1);
       continue;
     }
-    const namedOffered = scan.invokeNames.length > 0 &&
-      scan.invokeNames.every((name) => offeredNames.has(name));
-    const pending = scan.pendingInvokeName;
-    const startingOffered = pending !== undefined &&
-      [...offeredNames].some((offered) => offered.startsWith(pending));
-    if (namedOffered || startingOffered) return at;
-    if (scan.invokeNames.length === 0 && scan.pendingInvokeName === undefined) {
-      if (undecided) return at;
-    }
+    if (dsmlCandidateDecision(text, at, offeredNames) !== "none") return at;
     at = nextDsmlTagStart(text, at + 1);
   }
   return -1;
@@ -757,72 +802,25 @@ function dsmlStartCandidate(
   requireOfferedName: boolean,
 ): number {
   if (offeredNames === undefined || offeredNames.size === 0) return -1;
-  /** Whether this reading withholds for a block it has not confirmed yet. */
-  const undecided = !requireOfferedName;
   let at = nextDsmlTagStart(text, 0);
   let candidates = 0;
   while (at >= 0 && candidates < MAX_TEXT_TOOL_MARKUP_CANDIDATES) {
     candidates += 1;
+    const decision = dsmlCandidateDecision(text, at, offeredNames);
+    if (decision === "recoverable" || (!requireOfferedName && decision === "undecided")) {
+      return at;
+    }
     const wrapper = parseDsmlTag(text, at);
-    if (!wrapper.ok) {
-      if (
-        undecided && wrapper.truncated && wrapper.partial !== undefined &&
-        !wrapper.partial.closing && couldBecomeWrapper(wrapper.partial) &&
-        text.length - at <= MAX_DSML_UNDECIDED_PREFIX
-      ) return at;
-      at = nextDsmlTagStart(text, at + 1);
-      continue;
-    }
-    if (wrapper.tag.closing || !isWrapperName(wrapper.tag.name)) {
-      at = nextDsmlTagStart(text, at + 1);
-      continue;
-    }
-    const invokeAt = nextDsmlTagStart(text, wrapper.end);
-    if (invokeAt < 0) {
-      if (undecided && text.length - at <= MAX_DSML_UNDECIDED_PREFIX) {
-        return at;
-      }
-      at = nextDsmlTagStart(text, at + 1);
-      continue;
-    }
-    const invoke = parseDsmlTag(text, invokeAt);
-    if (!invoke.ok) {
-      if (!invoke.truncated) {
-        at = nextDsmlTagStart(text, at + 1);
-        continue;
-      }
-      const pending = pendingInvokeName(invoke.partial);
-      if (pending === undefined) {
-        if (undecided && text.length - at <= MAX_DSML_UNDECIDED_PREFIX) {
-          return at;
-        }
-        at = nextDsmlTagStart(text, at + 1);
-        continue;
-      }
-      const matches = [...offeredNames].some((offered) =>
-        offered.startsWith(pending)
-      );
-      if (matches) return at;
-      at = nextDsmlTagStart(text, at + 1);
-      continue;
-    }
-    if (invoke.tag.closing || invoke.tag.name !== "invoke") {
-      at = nextDsmlTagStart(text, at + 1);
-      continue;
-    }
-    const name = invoke.tag.attributes.name;
-    if (name === undefined || name.length === 0) {
-      if (undecided && text.length - at <= MAX_DSML_UNDECIDED_PREFIX) {
-        return at;
-      }
-      at = nextDsmlTagStart(text, at + 1);
-      continue;
-    }
-    if (!offeredNames.has(name)) {
-      at = nextDsmlTagStart(text, at + 1);
-      continue;
-    }
-    return at;
+    const scan = wrapper.ok && !wrapper.tag.closing &&
+        isWrapperName(wrapper.tag.name)
+      ? scanDsmlBlock(text, at)
+      : undefined;
+    // Step past a whole block so its own tags do not each count against the
+    // candidate bound, exactly as the finish strip does.
+    at = nextDsmlTagStart(
+      text,
+      scan !== undefined && scan.complete ? scan.end : at + 1,
+    );
   }
   return -1;
 }

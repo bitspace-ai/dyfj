@@ -684,13 +684,21 @@ export function stripIncompleteTextToolCallSuffix(
   );
   if (extraction.unrecoverable) return text;
   const withoutCompleteCalls = extraction.cleaned;
+  // Both cuts are decided on the text as it arrived, not on the text with the
+  // complete blocks already removed: the undecided reading measures a candidate
+  // against the distance to the end of the reply, and removing blocks earlier
+  // in the reply would shorten that distance and cut prose the presenter
+  // forwarded. A cut is always at the end of the text - a truncated block runs
+  // to it - so the same cut in `withoutCompleteCalls` is that many characters
+  // from its end.
+  const dsmlCut = dsmlTruncatedBlockStart(text, offered);
+  const dsmlKeep = dsmlCut < 0
+    ? withoutCompleteCalls.length
+    : withoutCompleteCalls.length - (text.length - dsmlCut);
   const confirmed = qwenConfirmedMarkupStart(withoutCompleteCalls, tools);
   const incomplete = confirmed >= 0
     ? confirmed
     : recognizedIncompleteTextToolMarkupStart(withoutCompleteCalls, tools);
-  const qwenCut = incomplete < 0
-    ? withoutCompleteCalls
-    : withoutCompleteCalls.slice(0, incomplete);
-  const dsmlCut = dsmlTruncatedBlockStart(qwenCut, offered);
-  return dsmlCut >= 0 ? qwenCut.slice(0, dsmlCut) : qwenCut;
+  const qwenKeep = incomplete < 0 ? withoutCompleteCalls.length : incomplete;
+  return withoutCompleteCalls.slice(0, Math.min(qwenKeep, dsmlKeep));
 }

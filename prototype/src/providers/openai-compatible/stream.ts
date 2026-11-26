@@ -320,6 +320,73 @@ function createMarkupCandidateCounter(limit: number) {
   };
 }
 
+/** The Qwen wrapper's closing tag, which ends a withheld Qwen block. */
+const QWEN_TOOL_CALL_CLOSING = "</tool_call>";
+
+/**
+ * The close-tag probe for one withheld block. Only the characters that arrived
+ * after the last probe can hold a closing tag's start, plus the longest tag's
+ * worth of overlap in case one straddled a previous delta, so the probe reads a
+ * carried tail window rather than rescanning the withheld span. The withheld
+ * chunks themselves are never joined on the probe's account: the join happens
+ * once, when the block ends or the turn finishes.
+ */
+function createWithheldCloseProbe() {
+  /** Index just past the close tag, once found. */
+  let closingTagEnd = -1;
+  /** The tail the last probe covered, and the characters appended since. */
+  let tail = "";
+  let newText = "";
+  const reset = (): void => {
+    closingTagEnd = -1;
+    tail = "";
+    newText = "";
+  };
+  return {
+    /** Start probing a span whose whole text is already withheld. */
+    begin(withheldText: string): void {
+      reset();
+      newText = withheldText;
+    },
+    /** Note characters appended to the withheld span. */
+    append(delta: string): void {
+      newText += delta;
+    },
+    reset,
+    /**
+     * Index just past the withheld block's close tag, or -1 while it has not
+     * arrived. `heldCharacters` is how many characters are withheld in total,
+     * so a tag found inside the probed window reports its index in the withheld
+     * span rather than in the window.
+     */
+    probe(
+      dialect: "qwen" | "dsml" | undefined,
+      heldCharacters: number,
+    ): number {
+      if (closingTagEnd >= 0) return closingTagEnd;
+      if (newText.length === 0) return -1;
+      const windowText = tail + newText;
+      const windowStart = heldCharacters - windowText.length;
+      const found = dialect === "qwen"
+        ? qwenClosingTagEnd(windowText)
+        : dsmlWrapperClosingEnd(windowText, 0);
+      if (found < 0) {
+        tail = windowText.slice(-(MAX_DSML_CLOSING_TAG_LENGTH - 1));
+        newText = "";
+        return -1;
+      }
+      closingTagEnd = windowStart + found;
+      return closingTagEnd;
+    },
+  };
+}
+
+/** Index just past a Qwen `</tool_call>` close tag in `text`, or -1. */
+function qwenClosingTagEnd(text: string): number {
+  const closing = text.indexOf(QWEN_TOOL_CALL_CLOSING);
+  return closing < 0 ? -1 : closing + QWEN_TOOL_CALL_CLOSING.length;
+}
+
 /**
  * Live presentation of streamed text. Text is forwarded to `onTextDelta` as it
  * arrives, except for a recognized offered-tool block of either markup dialect,
@@ -337,15 +404,7 @@ function createTextPresenter(
   let text = "";
   /** Which dialect is being withheld, or undefined when nothing is. */
   let suppressing: "qwen" | "dsml" | undefined;
-  /**
-   * While withholding: the index of `pending` already probed for the block's
-   * close tag, and the index just past that tag once it was found. Both reset
-   * when withholding begins, so a block held across many deltas costs a probe
-   * over the characters that arrived rather than a rescan of the whole
-   * withheld span at each delta.
-   */
-  let closingSearchFrom = 0;
-  let closingTagEnd = -1;
+  const withheldClose = createWithheldCloseProbe();
   let sawTextToolMarkup = false;
   let textToolRecoveryDisabled = !tools || tools.length === 0;
   const functionCandidates = createMarkupCandidateCounter(
@@ -357,30 +416,52 @@ function createTextPresenter(
   const dsmlCandidates = createMarkupCandidateCounter(MAX_DSML_MARKUP_TOKENS);
   /**
    * The text not yet decided: what the reader still has to look at, drained as
-   * it is emitted or withheld. Every scan reads this short tail, never the
-   * accumulated text, so a long reply costs time linear in its characters
-   * instead of re-reading the whole of it at each delta.
+   * it is emitted or withheld. It is held as the chunks it arrived in, so a
+   * withheld block is never rebuilt from a growing string at each delta; the
+   * join happens once, when the block ends or the turn finishes.
    */
-  let pending = "";
+  let pendingParts: string[] = [];
+  let pendingChars = 0;
+  let pendingJoin: string | undefined = "";
   let forwardedText = "";
 
   const offeredNames = tools
     ? new Set(toolWireNames(tools).map(({ wire }) => wire))
     : undefined;
+  /** The undecided text, joined. Cached until the next append or drop. */
+  const pending = (): string => (pendingJoin ??= pendingParts.join(""));
+  const appendPending = (delta: string) => {
+    if (delta.length === 0) return;
+    pendingParts.push(delta);
+    pendingChars += delta.length;
+    pendingJoin = undefined;
+  };
+  const dropPendingPrefix = (characters: number) => {
+    if (characters <= 0) return;
+    const rest = pending().slice(characters);
+    pendingParts = rest.length === 0 ? [] : [rest];
+    pendingChars = rest.length;
+    pendingJoin = rest;
+  };
   const emitTextDelta = (delta: string) => {
     if (delta.length === 0) return;
     forwardedText += delta;
     onTextDelta(delta);
   };
-  /** Emit the decided prefix of `pending` and drop it. */
+  /** Emit the decided prefix of the undecided text and drop it. */
   const release = (characters: number) => {
     if (characters <= 0) return;
-    emitTextDelta(pending.slice(0, characters));
-    pending = pending.slice(characters);
+    emitTextDelta(pending().slice(0, characters));
+    dropPendingPrefix(characters);
+  };
+  /** Stop withholding, dropping the close-tag probe state with it. */
+  const endWithholding = () => {
+    suppressing = undefined;
+    withheldClose.reset();
   };
   /** Emit the withheld span, or hide it once recovery confirms it runs. */
   const settleWithheld = (end: number) => {
-    const candidate = pending.slice(0, end);
+    const candidate = pending().slice(0, end);
     const extraction = extractTextToolCallsInternal(
       candidate,
       offeredNames,
@@ -391,61 +472,36 @@ function createTextPresenter(
     } else {
       sawTextToolMarkup = true;
     }
-    pending = pending.slice(end);
-    suppressing = undefined;
-    closingSearchFrom = 0;
-    closingTagEnd = -1;
+    endWithholding();
+    dropPendingPrefix(end);
   };
-  /** Start withholding `pending` from its beginning in one dialect. */
+  /** Start withholding the undecided text in one dialect. */
   const beginWithholding = (dialect: "qwen" | "dsml") => {
+    endWithholding();
     suppressing = dialect;
-    closingSearchFrom = 0;
-    closingTagEnd = -1;
+    withheldClose.begin(pending());
   };
-  /** Index just past the close tag of the block being withheld, or -1. */
-  const withheldClosingEnd = (): number => {
-    if (closingTagEnd >= 0) return closingTagEnd;
-    // Only the characters that arrived since the last probe can hold the
-    // start of a close tag, plus the longest tag's worth of overlap in case
-    // one straddled the previous delta.
-    const from = Math.max(0, closingSearchFrom - (MAX_DSML_CLOSING_TAG_LENGTH - 1));
-    if (suppressing === "qwen") {
-      const closing = pending.indexOf("</tool_call>", from);
-      if (closing < 0) {
-        closingSearchFrom = pending.length;
-        return -1;
-      }
-      closingTagEnd = closing + "</tool_call>".length;
-      return closingTagEnd;
-    }
-    const end = dsmlWrapperClosingEnd(pending, from);
-    if (end < 0) {
-      closingSearchFrom = pending.length;
-      return -1;
-    }
-    closingTagEnd = end;
-    return end;
-  };
+  /** Index just past the close tag of the withheld block, or -1. */
+  const withheldClosingEnd = (): number =>
+    withheldClose.probe(suppressing, pendingChars);
   const forwardAvailableText = () => {
     while (true) {
       if (textToolRecoveryDisabled) {
-        release(pending.length);
+        release(pendingChars);
         return;
       }
       if (suppressing === "dsml") {
         // A closing wrapper tag is the cheap proof the block ended; the parse
         // then runs once, on the whole block, rather than on every delta.
         if (withheldClosingEnd() < 0) return;
-        const end = dsmlBlockEnd(pending, 0);
+        const end = dsmlBlockEnd(pending(), 0);
         if (end < 0) {
           // The wrapper closed around something that is not a DSML block, so
           // that markup is prose after all. Release it only as far as its own
           // close tag, then read on: a recoverable block may follow in the
           // same text, and it must not be released with the prose.
-          const proseEnd = closingTagEnd;
-          suppressing = undefined;
-          closingSearchFrom = 0;
-          closingTagEnd = -1;
+          const proseEnd = withheldClosingEnd();
+          endWithholding();
           release(proseEnd);
           continue;
         }
@@ -453,12 +509,14 @@ function createTextPresenter(
         continue;
       }
       if (suppressing === "qwen") {
-        if (withheldClosingEnd() < 0) return;
-        settleWithheld(closingTagEnd);
+        const closeEnd = withheldClosingEnd();
+        if (closeEnd < 0) return;
+        settleWithheld(closeEnd);
         continue;
       }
-      const dsmlStart = dsmlRecoverableMarkupStart(pending, tools);
-      const qwenStart = qwenConfirmedMarkupStart(pending, tools);
+      const current = pending();
+      const dsmlStart = dsmlRecoverableMarkupStart(current, tools);
+      const qwenStart = qwenConfirmedMarkupStart(current, tools);
       const markupStart = dsmlStart >= 0 && (qwenStart < 0 || dsmlStart <= qwenStart)
         ? dsmlStart
         : qwenStart;
@@ -468,12 +526,12 @@ function createTextPresenter(
         continue;
       }
       const safeStarts = [
-        qwenPossibleTextToolMarkupStart(pending, tools),
-        dsmlPossibleMarkupStart(pending, tools),
-        dsmlPartialOpeningStart(pending),
+        qwenPossibleTextToolMarkupStart(current, tools),
+        dsmlPossibleMarkupStart(current, tools),
+        dsmlPartialOpeningStart(current),
       ].filter((start) => start >= 0);
       const safeEnd = safeStarts.length === 0
-        ? pending.length
+        ? current.length
         : Math.min(...safeStarts);
       if (safeEnd > 0) release(safeEnd);
       return;
@@ -492,7 +550,8 @@ function createTextPresenter(
         dsmlCandidates.observe(delta, DSML_MARKER_COUNT);
       }
       text += delta;
-      pending += delta;
+      appendPending(delta);
+      if (suppressing !== undefined) withheldClose.append(delta);
       if (
         !textToolRecoveryDisabled &&
         (
@@ -507,7 +566,7 @@ function createTextPresenter(
           );
         }
         textToolRecoveryDisabled = true;
-        suppressing = undefined;
+        endWithholding();
       }
       forwardAvailableText();
     },
@@ -520,7 +579,9 @@ function createTextPresenter(
         throw new DomainError("Provider stream presentation diverged");
       }
       emitTextDelta(deliverable.slice(forwardedText.length));
-      pending = "";
+      pendingParts = [];
+      pendingChars = 0;
+      pendingJoin = "";
       return deliverable;
     },
   };

@@ -38,7 +38,10 @@ README are tracked separately in its Revision history section.
   block that closed but does not follow the dialect is prose: it is released
   only as far as its own close tag and the reader carries on, so a recoverable
   block later in the same reply is still recovered rather than shown, and the
-  delivery never cuts text it already forwarded. A markup opener a tokenizer
+  delivery never cuts text it already forwarded: the presenter and the finish
+  strip read one per-candidate decision, so only a block whose first invoke
+  names an offered tool, or one still undecided within its bound, is ever cut.
+  A markup opener a tokenizer
   splits across deltas is withheld too, including a fragment as short as `<`
   and the separator run, and the prose after a recovered block is forwarded as
   it arrives instead of waiting for the stream to end. A block is only withheld
@@ -47,11 +50,12 @@ README are tracked separately in its Revision history section.
   releases it, so markup-shaped text in ordinary prose costs no more than that
   bound. Every scan stays linear and bounded: the separator-wrapped marker count
   is capped at the same per-element candidate limit as the Qwen dialect scaled
-  to that dialect's tokens per element, the search for a withheld block's close
-  tag resumes from the last character already probed rather than restarting at
-  the block's beginning, the block's end is read once per block rather than
-  once per delta, the presenter scans only the text it has not decided yet
-  rather than the whole reply at each delta, and the whole-text scan keeps the
+  to that dialect's tokens per element, a withheld block's chunks are held in
+  an array and only a carried tail window plus the newly arrived characters is
+  probed for the close tag, so wall-clock time stays linear across tens of
+  thousands of deltas, the block's end is read once per block rather than once
+  per delta, the presenter scans only the text it has not decided yet rather
+  than the whole reply at each delta, and the whole-text scan keeps the
   accepted-response bound. The bounds, the argument-budget helper and
   its
   coercion moved into `providers/shared/text-markup-bounds.ts` and

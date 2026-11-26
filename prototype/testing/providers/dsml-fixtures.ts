@@ -129,6 +129,41 @@ export const DSML_INVALID_OFFERED_BLOCK = `${dsmlTag("spaced", "calls")}\n` +
   `${dsmlCloseTag("spaced", "invoke")}\n` +
   `${dsmlCloseTag("spaced", "calls")}`;
 
+/**
+ * A block whose *first* invoke names a tool the caller did not offer and whose
+ * second invoke the reply cuts off inside the invoke name, where the part that
+ * arrived (`ba`) prefixes an offered tool (`bash`). Nothing here makes the block
+ * recoverable: recovery runs a block only when every invoke names an offered
+ * tool. The finish strip once read the truncated second name on its own and cut
+ * the block, throwing `Provider stream presentation diverged` because the
+ * presenter had already forwarded it.
+ */
+export const DSML_UNOFFERED_FIRST_TRUNCATED_SECOND_BLOCK =
+  `${dsmlTag("spaced", "calls")}\n` +
+  `${dsmlTag("spaced", "invoke", ' name="other"')}\n` +
+  `${dsmlTag("spaced", "parameter", ' name="x" string="true"')}v` +
+  `${dsmlCloseTag("spaced", "parameter")}\n` +
+  `${dsmlCloseTag("spaced", "invoke")}\n` +
+  // The invoke opening without its `>`: the reply ends inside the name.
+  `${dsmlTag("spaced", "invoke", ' name="bash"').slice(0, -1)}`;
+
+/**
+ * A block the presenter withheld (its first invoke names the offered `bash`)
+ * whose second invoke names a tool the caller did not offer, so recovery
+ * declines the block and the text ends inside it. The block is never shown: the
+ * presenter was still withholding it when the reply ended, and the finish strip
+ * drops it.
+ */
+export const DSML_WITHHELD_UNOFFERED_SECOND_BLOCK =
+  `${dsmlTag("spaced", "calls")}\n` +
+  `${dsmlTag("spaced", "invoke", ' name="bash"')}\n` +
+  `${dsmlTag("spaced", "parameter", ' name="command" string="true"')}echo hi` +
+  `${dsmlCloseTag("spaced", "parameter")}\n` +
+  `${dsmlCloseTag("spaced", "invoke")}\n` +
+  `${dsmlTag("spaced", "invoke", ' name="other"')}\n` +
+  `${dsmlTag("spaced", "parameter", ' name="x" string="true"')}v` +
+  `${dsmlCloseTag("spaced", "parameter")}\n`;
+
 /** Prose to place before a block in a mixed reply. */
 export const DSML_PROSE = "Let me check that.";
 
