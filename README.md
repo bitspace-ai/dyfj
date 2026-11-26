@@ -465,24 +465,26 @@ routing and the model picker; the built-in row does not replace it.
 Agent-tool turns default to a soft limit of 32 steps. Every entrypoint accepts
 `DYFJ_MAX_TOOL_STEPS`; the UDS engine also loads
 `[agent].max_tool_steps` from `~/.dyfj/config.toml`. Values are integers from 1
-through 64, and the environment value takes precedence for the engine.
+through 256, and the environment value takes precedence for the engine.
 
 That number is a soft limit, not a hard ceiling. After each tool step the turn
 weighs the step against its progress and its spend (`step-budget.ts`). A step
 that made forward progress — a call it had not already made this turn that did
 not fail, or a successful write or edit — lets the turn extend its limit by half
-the soft limit, never past the ceiling in `[agent].max_tool_steps_ceiling`
-(`DYFJ_MAX_TOOL_STEPS_CEILING`, default 64). A turn with two consecutive
-unproductive steps at the soft limit stops there instead of burning the rest of
-its budget, and a turn whose turn or runaway spend is already used stops before
-extending, because the next call would be refused anyway. Extension is on by
-default; `[agent] step_extension = false` (`DYFJ_STEP_EXTENSION`) restores the
-fixed limit exactly.
+the soft limit, once it has reached that limit, never past the ceiling in
+`[agent].max_tool_steps_ceiling` (`DYFJ_MAX_TOOL_STEPS_CEILING`, default 128). A
+step that made no progress extends nothing: it counts toward a stall streak, and
+two in a row stop the turn there instead of burning the rest of its budget. A
+turn whose turn or runaway spend is already used stops before extending, because
+the next call would be refused anyway. Extension is on by default;
+`[agent] step_extension = false` (`DYFJ_STEP_EXTENSION`) restores the fixed
+limit exactly: no extension, no `step_budget` event, and the receipt and posture
+line it always printed.
 
 The final receipt reports `Tool steps: used/limit` and marks when tool use ended.
 Past the soft limit it also names the policy — `(soft N, stopped: stall)` — so a
 turn that stopped early is distinguishable from one the model ended itself. The
-REPL posture line reads `32 tool steps (ceiling 64, extends on progress)`, and
+REPL posture line reads `32 tool steps (ceiling 128, extends on progress)`, and
 each decision is a durable `step_budget` event (soft limit, ceiling, effective
 limit, step, whether that step was productive, and the decision) so thresholds
 can be tuned from real turn telemetry later.
@@ -492,9 +494,11 @@ for a handoff: what is done, what is next, and any uncommitted state. If that ca
 fails or a budget gate stops it, the turn ends on a runtime notice of its last
 tool calls instead. A session sets its own limit with `--tool-steps N` or
 `/steps N`, up to the ceiling in `[agent].max_tool_steps_ceiling`
-(`DYFJ_MAX_TOOL_STEPS_CEILING`, default 64); the runtime refuses a value above
-it. An explicit `--tool-steps N` or `/steps N` is that session's soft limit,
-and the ceiling still bounds any extension.
+(`DYFJ_MAX_TOOL_STEPS_CEILING`, default 128); the runtime refuses a value above
+it. An explicit `--tool-steps N` or `/steps N` is a hard cap: the operator named
+that number, so the turn stops there whatever its progress, and the posture line
+reads `N tool steps (ceiling M, hard cap)`. Progress-based extension applies to
+the configured default only.
 
 The receipt line adds `cached N%` when a provider reports cache traffic: the
 share of the turn's input read from the prompt cache. The turn result's
@@ -4045,3 +4049,9 @@ Document revisions only. Code and behavior changes are tracked in
   spend outranks progress. Document `[agent] step_extension` /
   `DYFJ_STEP_EXTENSION`, the `step_budget` event, and the receipt and posture
   policy segments both clients print.
+- 2026-11-26 - Raise the tool-step bound to 256 and the default ceiling to 128
+  (`BIT-992`), keeping the soft default at 32, so a productive turn can run past
+  the 64-step mark the dogfooding runs kept hitting. Document that a step
+  without progress never extends, that an explicit `--tool-steps N` /
+  `/steps N` is a hard cap, and that a turn the budget stopped is named for what
+  stopped it rather than as a limit reached.

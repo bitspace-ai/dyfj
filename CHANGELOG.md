@@ -14,28 +14,32 @@ README are tracked separately in its Revision history section.
 - **Progress-aware tool-step budget (`BIT-992`).** A native turn's tool steps
   were bounded by one fixed number, so a productive turn working through a repo
   was interrupted mid-stride while its dollar budgets were nowhere near spent.
-  The configured limit is now a *soft* limit (`[agent] max_tool_steps`,
-  `DYFJ_MAX_TOOL_STEPS`, `--tool-steps`, `/steps`), and after each tool step the
-  turn's budget (`prototype/src/engine/step-budget.ts`) decides what that step
-  meant: a step that made forward progress — a call not already made this turn
-  that did not fail, or a successful write or edit — extends the limit by half
-  the soft limit, never past `[agent] max_tool_steps_ceiling`
-  (`DYFJ_MAX_TOOL_STEPS_CEILING`); two consecutive unproductive steps at the
-  soft limit stop the turn there instead of burning the rest of its budget; and
-  a turn whose turn or runaway spend is already used stops before extending,
-  because the next provider call would be refused anyway. Extension is on by
-  default and `[agent] step_extension = false` (`DYFJ_STEP_EXTENSION`) restores
-  the previous fixed-limit behaviour exactly. Explicit values keep their
-  meaning and their fail-closed validation: a value above the ceiling is still
-  refused rather than clamped, a remote caller still cannot raise the limit,
-  and the ceiling still bounds any extension. Each decision is one durable
-  `step_budget` event (`schema/migrations/029_events_step_budget.sql`) carrying
-  the soft limit, the ceiling, the effective limit, the step, whether that step
-  was productive, the stall count and the decision, so thresholds can be tuned
-  from real turn telemetry. The receipt reports `Tool steps: used/limit` with
-  `(soft N, stopped: <reason>)` once the soft limit is in play, the REPL posture
-  line reads `32 tool steps (ceiling 64, extends on progress)`, and both clients
-  narrate an extension and a stop as they happen.
+  The configured limit is now a *soft* limit (`[agent] max_tool_steps`, default
+  32, valid range 1 through 256), and after each tool step the turn's budget
+  (`prototype/src/engine/step-budget.ts`) decides what that step meant. Once a
+  turn has reached its limit, a step that made forward progress — a call not
+  already made this turn that did not fail, or a successful write or edit —
+  extends the limit by half the soft limit, never past
+  `[agent] max_tool_steps_ceiling` (`DYFJ_MAX_TOOL_STEPS_CEILING`, default 128).
+  A step that made no progress extends nothing: it counts toward a stall
+  streak, and two in a row stop the turn there instead of burning the rest of
+  its budget. A turn whose turn or runaway spend is already used stops before
+  extending, because the next provider call would be refused anyway. Extension
+  is on by default and `[agent] step_extension = false` (`DYFJ_STEP_EXTENSION`)
+  restores the previous fixed-limit behaviour exactly: no extension, no
+  `step_budget` event, and the receipt and posture line the turn always printed.
+  Explicit values keep their meaning and their fail-closed validation: a value
+  above the ceiling is still refused rather than clamped, a remote caller still
+  cannot raise the limit, and the ceiling still bounds any extension. Each
+  decision is one durable `step_budget` event
+  (`schema/migrations/029_events_step_budget.sql`) carrying the soft limit, the
+  ceiling, the effective limit, the step, whether that step was productive, the
+  stall count and the decision, so thresholds can be tuned from real turn
+  telemetry. The receipt reports `Tool steps: used/limit` with
+  `(soft N, stopped: <reason>)` once the soft limit is in play, naming what
+  stopped a turn the budget ended rather than claiming a limit was reached; the
+  REPL posture line reads `32 tool steps (ceiling 128, extends on progress)`,
+  and both clients narrate an extension and a stop as they happen.
 
 - **Operator-owned workspace profiles (`BIT-982`).** An optional
   `[[workspaces]]` array in `~/.dyfj/config.toml` lets one runtime serve
@@ -890,16 +894,25 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
-- **The tool-step limit is a soft limit.** `[agent] max_tool_steps`,
-  `DYFJ_MAX_TOOL_STEPS`, `--tool-steps N` and `/steps N` set the count a turn
-  starts with, not the count it must stop at; a productive turn may now run to
-  the ceiling. `[agent] max_tool_steps_ceiling` and
-  `DYFJ_MAX_TOOL_STEPS_CEILING` keep their meaning and are the hard bound. A
-  configuration that relies on the fixed limit can restore it with
-  `[agent] step_extension = false` (`DYFJ_STEP_EXTENSION=false`). The turn
-  result and receipt gain `agent.softToolSteps` and `agent.stepStopReason`, both
-  absent when they would say nothing the effective limit does not, so a turn
-  inside its soft limit reads exactly as it did.
+- **The configured tool-step limit is a soft limit.** `[agent] max_tool_steps`
+  and `DYFJ_MAX_TOOL_STEPS` set the count a turn starts with, not the count it
+  must stop at; a productive turn may now run to the ceiling. A configuration
+  that relies on the fixed limit can restore it with
+  `[agent] step_extension = false` (`DYFJ_STEP_EXTENSION=false`).
+  `[agent] max_tool_steps_ceiling` and `DYFJ_MAX_TOOL_STEPS_CEILING` keep their
+  meaning and are the hard bound, and both it and the absolute bound rise:
+  `max_tool_steps_ceiling` defaults to 128 and every tool-step setting is now an
+  integer from 1 through 256, where 64 was the bound. The default soft limit
+  stays at 32. The turn result and receipt gain `agent.softToolSteps` and
+  `agent.stepStopReason`, absent when they would say nothing the effective limit
+  does not, so a turn inside its soft limit reads exactly as it did.
+
+- **An explicit session tool-step limit is a hard cap.** `--tool-steps N` and
+  `/steps N` stay what they always were: the operator named a number, so the turn
+  stops at it whatever its progress, and the posture line reads
+  `N tool steps (ceiling M, hard cap)`. Progress-based extension applies to the
+  configured default only. A turn request's own `maxToolSteps` takes the same
+  path.
 
 - **Repo context carries no assumptions about this repository (`BIT-983`).**
   The `ask` and `next-work` context loader no longer hardcodes this project's

@@ -7,18 +7,26 @@
  * numbers and a progress test:
  *
  *   - the **soft limit**: the step count the turn was configured for (the
- *     standing `[agent] max_tool_steps`, or a session's own `/steps N`);
+ *     standing `[agent] max_tool_steps`);
  *   - the **ceiling**: the hard safety bound the turn may never pass;
  *   - **extension**: whether a productive turn may raise its soft limit
  *     toward the ceiling, in chunks.
  *
  * After each tool step the loop asks `decide`. A step inside the soft limit
- * continues. Past it, a step that made forward progress extends the limit by
- * a chunk (never past the ceiling), and a step that made none counts toward a
- * stall streak: two unproductive steps in a row stop the turn early instead of
- * burning the rest of the budget on a loop. Spend outranks progress: a turn
- * whose dollar budgets are already spent stops before extending, because the
- * next provider call would be refused anyway.
+ * continues. Past it, the budget watches two things. An unproductive step
+ * counts toward a stall streak and never extends the limit: two of them in a
+ * row stop the turn early instead of burning the rest of the budget on a loop.
+ * A productive step clears the streak, and extends the limit only when the turn
+ * has reached the limit it is running under, so one extension is recorded per
+ * chunk rather than on every step. Spend outranks progress: a turn whose dollar
+ * budgets are already spent stops before extending, because the next provider
+ * call would be refused anyway.
+ *
+ * A turn whose limit must not extend - the operator named it with
+ * `--tool-steps N` or `/steps N`, or `[agent] step_extension = false` - has no
+ * policy to apply: `decide` returns `continue` for every step and the loop
+ * ends the turn where it always did, so a fixed limit writes no
+ * `step_budget` event and reads as it did before this module existed.
  *
  * The budget is state, and its single writer is the agent loop.
  */
@@ -28,8 +36,6 @@ export const STALL_STEPS = 2;
 
 /** Why a turn's tool use ended. */
 export type StepStopReason =
-  /** The soft limit, with extension off. */
-  | "limit"
   /** The hard safety ceiling. */
   | "ceiling"
   /** Consecutive steps with no forward progress. */
@@ -129,6 +135,10 @@ export class StepBudget {
    */
   decide(outcome: StepOutcome): StepDecision {
     if (this.#stopReason !== undefined) return this.#stop(this.#stopReason);
+    // A limit that must not extend has nothing to decide, and no stop of its
+    // own to record: the loop reads `atLimit` and ends the turn where the
+    // fixed limit always ended it, with the receipt it always printed.
+    if (!this.extension) return { kind: "continue" };
     if (outcome.step >= this.ceiling) return this.#stop("ceiling");
     if (outcome.step < this.softLimit) return { kind: "continue" };
     if (
@@ -137,13 +147,24 @@ export class StepBudget {
     ) {
       return this.#stop("budget");
     }
-    if (!this.extension) return this.#stop("limit");
+    // An unproductive step counts toward the stall streak and never extends:
+    // progress is what buys steps, so a step without it buys none. Two in a
+    // row end tool use wherever they land, and a single one at the limit ends
+    // it too, because there is no chunk left to spend on the next step.
     if (!outcome.productive) {
       this.#stalledSteps += 1;
-      if (this.#stalledSteps >= STALL_STEPS) return this.#stop("stall");
-    } else {
-      this.#stalledSteps = 0;
+      if (
+        this.#stalledSteps >= STALL_STEPS ||
+        outcome.step >= this.#effectiveLimit
+      ) {
+        return this.#stop("stall");
+      }
+      return { kind: "continue" };
     }
+    this.#stalledSteps = 0;
+    // The extension question is asked at the limit the turn is running under,
+    // not on every step past the soft limit: a chunk holds until it is used.
+    if (outcome.step < this.#effectiveLimit) return { kind: "continue" };
     return this.#extend();
   }
 

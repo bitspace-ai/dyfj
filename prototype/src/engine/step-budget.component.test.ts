@@ -67,7 +67,7 @@ async function loopTurn(
 ): Promise<LoopRun> {
   const root = await mkdtemp(join(tmpdir(), "engine-step-budget-"));
   // Every path a productive step reads exists, so the tool succeeds.
-  for (let index = 0; index < 40; index++) {
+  for (let index = 0; index < 128; index++) {
     await writeFile(`${root}/notes-${index}.md`, `note ${index}\n`);
   }
   const run = engineServices(exchanges, models === undefined ? {} : { models });
@@ -96,6 +96,34 @@ async function stepBudgetRows(loop: LoopRun) {
   const rows = await eventRows(loop.run, sessionId!);
   return rows.filter((row) => row.event_type === "step_budget");
 }
+
+test("a productive turn runs past 64 steps toward the default ceiling of 128", async () => {
+  // The bound the issue is about: 64 steps of genuine progress used to end the
+  // turn there. With the default ceiling at 128 and 16-step chunks, step 64
+  // is inside an extension the turn already earned.
+  const steps: ScriptedExchange[] = [
+    ...Array.from({ length: 100 }, (_, index) => productiveStep(index)),
+    chatReply({ content: "explored everything" }),
+  ];
+  const { frames, result, error } = await loopTurn(steps, {
+    prompt: "work through the notes",
+    maxToolSteps: 32,
+    maxToolStepsCeiling: 128,
+  });
+  assert.strictEqual(error, null);
+  assert.ok(
+    (result?.agent.toolStepsUsed ?? 0) > 64,
+    `the turn stopped at ${result?.agent.toolStepsUsed} steps`,
+  );
+  assert.strictEqual(result?.agent.toolStepsUsed, 100);
+  assert.strictEqual(result?.agent.limitReached, false);
+  // One extension per chunk reached: 32 -> 48 -> ... -> 112 covers step 100.
+  const extensions = frames.filter((f) => f.type === "stepBudgetExtended");
+  assert.deepStrictEqual(
+    extensions.map((f) => [f.from, f.to]),
+    [[32, 48], [48, 64], [64, 80], [80, 96], [96, 112]],
+  );
+});
 
 test("a productive turn runs past its soft step budget instead of stopping there", async () => {
   const steps = Array.from({ length: 12 }, (_, index) =>
@@ -143,8 +171,9 @@ test("a stalled turn stops early, well inside its safety ceiling", async () => {
     maxToolStepsCeiling: 12,
   });
   assert.strictEqual(error, null);
-  // Soft budget 2, then the stall tolerance: the turn ends at 3 steps, not 12.
-  assert.strictEqual(result?.agent.toolStepsUsed, 3);
+  // Soft budget 2: the unproductive second step buys no chunk, so the turn
+  // ends there instead of running on to 12.
+  assert.strictEqual(result?.agent.toolStepsUsed, 2);
   assert.strictEqual(result?.agent.limitReached, true);
   assert.strictEqual(result?.agent.stepStopReason, "stall");
   assert.ok(
@@ -212,6 +241,90 @@ test("step-budget decisions are recorded in the durable event log", async () => 
     assert.strictEqual(entry.softLimit, 2);
     assert.strictEqual(entry.ceiling, 4);
   }
+});
+
+test("with extension off a fixed-limit turn records no step-budget decision", async () => {
+  // The fixed limit must behave as it always did: no `step_budget` event, no
+  // `(stopped: limit)` receipt suffix. The turn ends on the limit itself.
+  const steps = Array.from({ length: 6 }, (_, index) => productiveStep(index));
+  const loop = await loopTurn(steps, {
+    prompt: "work through the notes",
+    maxToolSteps: 2,
+    maxToolStepsCeiling: 8,
+    stepExtension: false,
+  });
+  assert.strictEqual(loop.error, null);
+  assert.strictEqual(loop.result?.agent.toolStepsUsed, 2);
+  assert.strictEqual(loop.result?.agent.maxToolSteps, 2);
+  assert.strictEqual(loop.result?.agent.limitReached, true);
+  assert.strictEqual(loop.result?.agent.softToolSteps, undefined);
+  assert.strictEqual(loop.result?.agent.stepStopReason, undefined);
+  assert.deepStrictEqual(await stepBudgetRows(loop), []);
+  assert.deepStrictEqual(
+    loop.frames.filter((f) => f.type === "stepBudgetExtended"),
+    [],
+  );
+  assert.deepStrictEqual(
+    loop.frames.filter((f) => f.type === "stepBudgetStopped"),
+    [],
+  );
+  // The receipt reads as the fixed-limit receipt always did.
+  assert.match(String(loop.result?.receipt), /Tool steps: 2\/2 \(limit reached/);
+  assert.strictEqual(
+    String(loop.result?.receipt).includes("stopped:"),
+    false,
+    String(loop.result?.receipt),
+  );
+});
+
+test("a session's own tool-step limit is a hard cap that does not extend", async () => {
+  // `--tool-steps N` / `/steps N` are the operator's predictable override: the
+  // turn stops at N whatever its progress, and only the configured default
+  // extends toward the ceiling.
+  const steps = Array.from({ length: 12 }, (_, index) => productiveStep(index));
+  const loop = await loopTurn(steps, {
+    prompt: "work through the notes",
+    maxToolSteps: 4,
+    maxToolStepsCeiling: 64,
+    toolStepsOverride: true,
+  });
+  assert.strictEqual(loop.error, null);
+  assert.strictEqual(loop.result?.agent.toolStepsUsed, 4);
+  assert.strictEqual(loop.result?.agent.maxToolSteps, 4);
+  assert.strictEqual(loop.result?.agent.limitReached, true);
+  assert.strictEqual(loop.result?.agent.stepStopReason, undefined);
+  assert.deepStrictEqual(
+    loop.frames.filter((f) => f.type === "stepBudgetExtended"),
+    [],
+  );
+  assert.deepStrictEqual(await stepBudgetRows(loop), []);
+});
+
+test("the receipt names a stall stop in one parenthetical, without claiming a limit", async () => {
+  // A stall stop at 3 of 12 steps is not a limit being reached, and the receipt
+  // is read by a human who should not be told otherwise.
+  const steps = Array.from({ length: 6 }, (_, index) =>
+    toolReply([{
+      id: `s${index}`,
+      name: "read_file",
+      arguments: { path: `missing-${index}.md` },
+    }])
+  );
+  const { result, error } = await loopTurn(steps, {
+    prompt: "loop without progress",
+    maxToolSteps: 2,
+    maxToolStepsCeiling: 12,
+  });
+  assert.strictEqual(error, null);
+  assert.strictEqual(result?.agent.stepStopReason, "stall");
+  const line = String(result?.receipt)
+    .split("\n")
+    .find((text) => text.startsWith("Tool steps:")) ?? "";
+  // One parenthetical, no claim that a limit was reached, and the handoff
+  // marker folded in rather than appended as a second group.
+  assert.match(line, /\(soft 2, stopped: stall/);
+  assert.strictEqual(line.includes("limit reached"), false, line);
+  assert.strictEqual(line.split("(").length, 2, line);
 });
 
 test("the receipt reports the effective step policy", async () => {

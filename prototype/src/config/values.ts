@@ -23,7 +23,7 @@ export function validatePositiveUsd(value: number, source: string): number {
  * The bound on every tool-step setting: the default limit, the configured
  * ceiling and a session's own limit are all integers from 1 through this.
  */
-export const TOOL_STEPS_BOUND = 64;
+export const TOOL_STEPS_BOUND = 256;
 
 export function validateMaxToolSteps(value: number, source: string): number {
   if (!Number.isInteger(value) || value < 1 || value > TOOL_STEPS_BOUND) {

@@ -51,7 +51,7 @@ import {
 // progress may extend past it toward `maxToolStepsCeiling`, in chunks, and a
 // stalled turn stops before reaching it (`step-budget.ts`). The ceiling is the
 // number that may never be passed.
-export const MAX_TOOL_STEPS = 64;
+export const MAX_TOOL_STEPS = 256;
 
 /**
  * The hard bound a turn may never pass: the configured ceiling, clamped to the
@@ -216,7 +216,12 @@ export async function openSession(
       input.maxToolStepsCeiling,
     ),
     maxToolStepsCeiling: effectiveCeiling(input.maxToolStepsCeiling),
-    stepExtension: input.stepExtension ?? AGENT_DEFAULTS.stepExtension,
+    // A session's own tool-step limit (`--tool-steps N`, `/steps N`) is the
+    // number the operator asked for, so it is a hard cap: progress-based
+    // extension applies to the configured default, never to an explicit value.
+    stepExtension: input.toolStepsOverride === true
+      ? false
+      : input.stepExtension ?? AGENT_DEFAULTS.stepExtension,
     fallbackRoot,
     honoredWorkspace: workspace.honored,
     workspaceLookupFailed: workspace.lookupFailed,

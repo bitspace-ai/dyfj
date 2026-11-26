@@ -527,7 +527,11 @@ function stepPolicyField(
   budget: TurnState["stepBudget"],
 ): { softToolSteps?: number; stepStopReason?: StepStopReason } {
   return {
-    ...(budget.effectiveLimit > budget.softLimit
+    // Named when the turn ran past its soft limit, and whenever the budget
+    // stopped it: a stop at the soft limit is exactly the case where the two
+    // numbers agree but the reason matters.
+    ...(budget.effectiveLimit > budget.softLimit ||
+        budget.stopReason !== undefined
       ? { softToolSteps: budget.softLimit }
       : {}),
     ...(budget.stopReason === undefined

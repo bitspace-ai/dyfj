@@ -48,10 +48,10 @@ import {
 import { writeMaybe } from "./event-writes.ts";
 import { writeStepBudgetEvent, stepBudgetRecord } from "./step-budget-events.ts";
 import {
+  budgetHandoffRequest,
   forcedConclusionSystemPrompt,
   HANDOFF_NOTICE_CALLS,
   HANDOFF_OUTPUT_TOKENS,
-  handoffRequest,
   hasHandoffLabels,
   stepLimitNotice,
 } from "./step-limit-handoff.ts";
@@ -451,7 +451,9 @@ async function runToolStep(
     const sized = next.forceConclude ? withoutReplay(sent) : sent;
     return estimateRequest(turn, {
       systemPrompt: next.systemPrompt,
-      messages: next.atCap ? [...sized, handoffRequest(state.stepBudget.effectiveLimit)] : sized,
+      messages: next.atCap
+        ? [...sized, budgetHandoffRequest(state.stepBudget)]
+        : sized,
       tools: next.tools,
     });
   };
@@ -811,7 +813,7 @@ async function stepLimitHandoff(
   // The request itself is the last thing the model reads, after the last
   // tool result; the system prompt carries it too, for the adapter that sends
   // no transcript.
-  messages.push(handoffRequest(state.stepBudget.effectiveLimit));
+  messages.push(budgetHandoffRequest(state.stepBudget));
   try {
     await fitRequest(turn, { systemPrompt, messages, tools: undefined }, "before_send");
     const estimatedInputCount = estimateRuntimeInputCount(
@@ -874,6 +876,7 @@ async function stepLimitHandoff(
       state.stepBudget.effectiveLimit,
       failure,
       state.recentToolCalls,
+      state.stepBudget.stopReason,
     ),
     stopReason: "stop",
     toolCalls: undefined,
@@ -953,6 +956,8 @@ function nextRequestShape(
 } {
   // The budget decides the cap: it is the effective limit (soft, extended) or
   // a stop the budget already reached, never the configured soft limit alone.
+  // A stop the budget made names itself, so the handoff instruction does not
+  // tell the model a limit was reached when a stall ended the turn.
   const atCap = state.stepBudget.atLimit(state.toolSteps);
   const forceConclude = atCap || allRepeats || approvalDenied;
   return {
@@ -962,7 +967,7 @@ function nextRequestShape(
       ? forcedConclusionSystemPrompt(
         state.systemPrompt,
         atCap
-          ? "limit"
+          ? state.stepBudget.stopReason ?? "limit"
           : approvalDenied
           ? "approval_denied"
           : "repeated_tool_calls",

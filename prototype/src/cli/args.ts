@@ -146,7 +146,7 @@ const VALUE_FLAGS = new Set([
  * The bound on a session's tool-step limit. The runtime's configured ceiling
  * can be lower; the runtime refuses a turn above it.
  */
-export const TOOL_STEPS_BOUND = 64;
+export const TOOL_STEPS_BOUND = 256;
 
 /** A tool-step limit as typed: an integer from 1 through the bound. */
 export function parseToolSteps(value: string): number | undefined {
@@ -610,7 +610,7 @@ Options:
                    on a model whose catalog row supports effort control
                    (default: low for a native model that takes one, else
                    [codex] reasoning_effort, else medium on the Codex route)
-  --tool-steps <N> this session's tool-step limit, 1 through 64 and not above
+  --tool-steps <N> this session's tool-step limit, 1 through 256 and not above
                    the runtime's ceiling (DYFJ_MAX_TOOL_STEPS_CEILING)
   --budget-turn <usd>, --budget-session <usd>, --budget-day <usd>,
   --budget-per-call <usd>, --budget-runaway <usd>

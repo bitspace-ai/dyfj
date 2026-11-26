@@ -23,6 +23,7 @@ import {
   runTurn,
   systemMessage,
 } from "../../testing/builders/engine.ts";
+import { MAX_TOOL_STEPS } from "./open-session.ts";
 import type { ScriptedExchange } from "../../testing/fakes/scripted-http-transport.ts";
 import {
   SONNET_55_FINAL,
@@ -180,8 +181,8 @@ test("agent loop honors a configured small step limit and asks for a no-tools ha
     maxToolSteps: 2,
     limitReached: true,
     handoff: "model",
-    // Extension is off, so the soft limit is what stopped tool use.
-    stepStopReason: "limit",
+    // Extension is off: the fixed limit ends the turn exactly as it always
+    // did, with no budget decision to report.
     autoApprovals: { allowlist: 0, sessionGrant: 0 },
   });
   // The handoff call offers no tools, asks for the handoff, and caps output.
@@ -259,7 +260,7 @@ test("an in-process caller cannot run past the configured tool-step ceiling", as
 for (
   const [provided, expected] of [
     [-2, 1],
-    [65, 64],
+    [1_000, MAX_TOOL_STEPS],
     [1.5, AGENT_DEFAULTS.maxToolSteps],
   ] as const
 ) {

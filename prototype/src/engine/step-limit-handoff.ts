@@ -9,6 +9,7 @@
  */
 import { sanitizeBoundaryText } from "../kernel/mod.ts";
 import { classifyErrorKind } from "./errors.ts";
+import type { StepStopReason } from "./step-budget.ts";
 import type { RecentToolCall } from "./turn-state.ts";
 
 /** The handoff call's output cap; the catalog cap applies when it is lower. */
@@ -41,19 +42,56 @@ export function handoffInstruction(reasonText: string): string {
 }
 
 /**
+ * Why tool use ended, as both the model and the operator read it. A turn that
+ * reached a limit it could not pass says so; a turn the step budget stopped
+ * early says what actually happened, because a stall at 3 of 12 steps is not a
+ * limit being reached and a handoff written as if it were misleads the next
+ * prompt.
+ */
+export function toolUseEndedText(
+  reason: StepStopReason | undefined,
+  limit: number,
+): string {
+  switch (reason) {
+    case "stall":
+      return "this turn stopped making progress: two consecutive tool steps " +
+        "added nothing new, so tool use ended at " + `${limit} steps`;
+    case "ceiling":
+      return `this turn reached its ${limit}-step safety ceiling`;
+    case "budget":
+      return "this turn's spend limits left no room for another tool call";
+    default:
+      return `this turn reached its ${limit}-step tool limit`;
+  }
+}
+
+/** Whether tool use ended because the step budget stopped the turn. */
+export function isBudgetStop(reason: StepStopReason | undefined): boolean {
+  return reason !== undefined;
+}
+
+/**
  * The system prompt for a step's forced conclusion: the handoff instruction at
- * the step limit, or the shorter no-more-tools instruction when tool use ended
- * because the model repeated itself or a call was not approved.
+ * the step limit (or at a stop the step budget made), or the shorter
+ * no-more-tools instruction when tool use ended because the model repeated
+ * itself or a call was not approved.
  */
 export function forcedConclusionSystemPrompt(
   baseSystemPrompt: string,
-  reason: "limit" | "repeated_tool_calls" | "approval_denied",
+  reason:
+    | StepStopReason
+    | "limit"
+    | "repeated_tool_calls"
+    | "approval_denied",
   maxToolSteps: number,
 ): string {
-  if (reason === "limit") {
+  if (
+    reason === "limit" || reason === "stall" || reason === "ceiling" ||
+    reason === "budget"
+  ) {
     return handoffSystemPrompt(
       baseSystemPrompt,
-      `this turn reached its ${maxToolSteps}-step tool limit`,
+      toolUseEndedText(reason === "limit" ? undefined : reason, maxToolSteps),
     );
   }
   const reasonText = reason === "approval_denied"
@@ -65,16 +103,28 @@ export function forcedConclusionSystemPrompt(
 }
 
 /** The handoff request as the turn's last user message. */
-export function handoffRequest(maxToolSteps: number): {
+export function handoffRequest(
+  maxToolSteps: number,
+  reason?: StepStopReason,
+): {
   role: "user";
   content: string;
 } {
   return {
     role: "user",
-    content: handoffInstruction(
-      `this turn reached its ${maxToolSteps}-step tool limit`,
-    ),
+    content: handoffInstruction(toolUseEndedText(reason, maxToolSteps)),
   };
+}
+
+/**
+ * The handoff request for a turn the step budget ended: the same instruction,
+ * naming the limit the turn actually ran under and what stopped it.
+ */
+export function budgetHandoffRequest(budget: {
+  effectiveLimit: number;
+  stopReason: StepStopReason | undefined;
+}): { role: "user"; content: string } {
+  return handoffRequest(budget.effectiveLimit, budget.stopReason);
 }
 
 const HANDOFF_LABELS = ["done", "next", "uncommitted state"] as const;
@@ -112,9 +162,10 @@ export function stepLimitNotice(
   maxToolSteps: number,
   failure: unknown,
   calls: readonly RecentToolCall[],
+  reason?: StepStopReason,
 ): string {
   const lines = [
-    `Tool-step limit reached (${toolSteps}/${maxToolSteps}). The handoff ` +
+    `${stepLimitNoticeLead(toolSteps, maxToolSteps, reason)} The handoff ` +
     `call did not produce a handoff (${summarizeErrorClass(failure)}), so ` +
     "this notice lists the turn's last tool calls instead.",
     "",
@@ -126,6 +177,29 @@ export function stepLimitNotice(
     "Uncommitted state is unknown. Check `git status` before the next prompt.",
   ];
   return lines.join("\n");
+}
+
+/**
+ * The notice's first clause. A fixed-limit turn reads the line it always did; a
+ * turn the step budget stopped names what stopped it, at the step count it
+ * stopped at.
+ */
+function stepLimitNoticeLead(
+  toolSteps: number,
+  maxToolSteps: number,
+  reason: StepStopReason | undefined,
+): string {
+  switch (reason) {
+    case "stall":
+      return `Tool use stopped at ${toolSteps}/${maxToolSteps} steps: two ` +
+        "consecutive steps added nothing new.";
+    case "ceiling":
+      return `Tool-step ceiling reached (${toolSteps}/${maxToolSteps}).`;
+    case "budget":
+      return `Spend limits stopped tool use at ${toolSteps}/${maxToolSteps} steps.`;
+    default:
+      return `Tool-step limit reached (${toolSteps}/${maxToolSteps}).`;
+  }
 }
 
 /** The error's fixed class label; never `.name`, a shadowable property. */

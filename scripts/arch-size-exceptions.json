@@ -69,7 +69,7 @@
   {
     "kind": "module",
     "path": "core/dyfj-repl/src/commands.rs",
-    "lines": 1914,
+    "lines": 1915,
     "reason": "Part of the Rust REPL in core/dyfj-repl (decision D23); not split yet.",
     "growth_reason": "The size gate now covers Rust; these files were already over the limit and are recorded at their current sizes."
   },

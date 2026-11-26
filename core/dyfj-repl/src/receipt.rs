@@ -122,26 +122,41 @@ pub fn line(receipt: &Value, repl_total: f64) -> String {
             .pointer("/agent/stepStopReason")
             .and_then(Value::as_str);
         let mut policy = Vec::new();
-        if let Some(soft) = soft.filter(|soft| *soft != max) {
+        // Named when the turn ran past its soft limit, and whenever the budget
+        // stopped it: a stop at the soft limit is the case where the two
+        // numbers agree but the reason matters.
+        if let Some(soft) = soft.filter(|soft| *soft != max || stopped.is_some()) {
             policy.push(format!("soft {soft}"));
         }
         if let Some(stopped) = stopped {
+            // A turn the budget stopped says what stopped it, in the same
+            // parenthetical, and does not claim a limit was reached: a stall
+            // two steps past a soft limit of 32 reached no limit.
             policy.push(format!("stopped: {}", crate::approval::visible(stopped)));
+            if limit {
+                policy.push(
+                    match handoff {
+                        Some("model") => "handoff",
+                        _ => "handoff failed",
+                    }
+                    .into(),
+                );
+            }
         }
         let policy = if policy.is_empty() {
             String::new()
         } else {
             format!(" ({})", policy.join(", "))
         };
-        parts.push(format!(
-            "tools {used}/{max}{policy}{}",
-            match (limit, handoff) {
-                (false, _) => "",
-                (true, Some("model")) => " (limit reached · handoff)",
-                (true, Some("notice")) => " (limit reached · handoff failed)",
-                (true, _) => " (limit reached)",
-            }
-        ));
+        // Only a turn that reached a limit it could not pass carries the limit
+        // marker; a turn the budget stopped carries the same information above.
+        let marker = match (limit, stopped, handoff) {
+            (true, None, Some("model")) => " (limit reached · handoff)",
+            (true, None, Some("notice")) => " (limit reached · handoff failed)",
+            (true, None, _) => " (limit reached)",
+            _ => "",
+        };
+        parts.push(format!("tools {used}/{max}{policy}{marker}"));
     }
     // Calls that ran without a prompt: the read-only allowlist and the
     // operator's "allow for the rest of the session" grants.

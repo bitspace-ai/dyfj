@@ -146,7 +146,7 @@ export const CONFIG_SCHEMA: readonly ConfigKeySpec[] = [
     domain: "engine",
     type: "number",
     kind: "value",
-    default: 64,
+    default: 128,
   },
   {
     key: "stepExtension",

@@ -59,18 +59,76 @@ test("a productive turn past its soft budget extends toward the ceiling", () => 
   });
   assert.strictEqual(budget.effectiveLimit, 4 + extensionChunk(4));
   assert.strictEqual(budget.allowsAnotherStep(4), true);
+  // Inside the granted chunk there is nothing to decide: the extension is
+  // asked once per chunk, at the limit the turn is running under.
+  assert.deepStrictEqual(budget.decide(outcome(5)), { kind: "continue" });
+  assert.deepStrictEqual(budget.decide(outcome(6)), {
+    kind: "extended",
+    from: 6,
+    to: 8,
+  });
   // Extension repeats while progress continues, and never passes the ceiling.
-  for (let step = 5; step < 20; step++) budget.decide(outcome(step));
+  for (let step = 7; step < 20; step++) budget.decide(outcome(step));
   assert.strictEqual(budget.effectiveLimit, 12);
 });
 
-test("a turn with no extension policy stops at its soft budget", () => {
-  const budget = new StepBudget({ ...POLICY, extension: false });
-  assert.deepStrictEqual(budget.decide(outcome(4)), {
-    kind: "stop",
-    reason: "limit",
-    effectiveLimit: 4,
+test("an extension is asked once per chunk, and never re-records the same bound", () => {
+  const budget = new StepBudget({
+    softLimit: 32,
+    ceiling: 128,
+    extension: true,
   });
+  const extensions: Array<{ from: number; to: number }> = [];
+  for (let step = 1; step <= 128; step++) {
+    const decision = budget.decide(outcome(step));
+    if (decision.kind === "extended") {
+      extensions.push({ from: decision.from, to: decision.to });
+    }
+  }
+  // A no-op extension (from === to) would be a decision that changed nothing,
+  // so the log would carry rows that say nothing happened.
+  for (const extension of extensions) {
+    assert.ok(
+      extension.to > extension.from,
+      `extension ${extension.from} -> ${extension.to} changed nothing`,
+    );
+  }
+  // 32 -> 128 in chunks of 16 is six extensions, one per chunk reached.
+  assert.deepStrictEqual(extensions, [
+    { from: 32, to: 48 },
+    { from: 48, to: 64 },
+    { from: 64, to: 80 },
+    { from: 80, to: 96 },
+    { from: 96, to: 112 },
+    { from: 112, to: 128 },
+  ]);
+  assert.strictEqual(budget.effectiveLimit, 128);
+});
+
+test("a productive turn runs past 64 steps toward the 128 default ceiling", () => {
+  const budget = new StepBudget({
+    softLimit: 32,
+    ceiling: 128,
+    extension: true,
+  });
+  for (let step = 1; step <= 64; step++) budget.decide(outcome(step));
+  // The bound the issue is about: a turn making progress at step 64 is not
+  // interrupted there.
+  assert.strictEqual(budget.stopped, false);
+  assert.strictEqual(budget.allowsAnotherStep(64), true);
+  assert.strictEqual(budget.effectiveLimit, 80);
+});
+
+test("a turn with extension off reaches its limit and records nothing", () => {
+  const budget = new StepBudget({ ...POLICY, extension: false });
+  // A fixed-limit turn has no decision to record and no stop of its own: it
+  // ends where it always did, and the loop reads that from `atLimit`.
+  assert.deepStrictEqual(budget.decide(outcome(4)), { kind: "continue" });
+  assert.strictEqual(budget.effectiveLimit, 4);
+  assert.strictEqual(budget.stalledSteps, 0);
+  assert.strictEqual(budget.stopReason, undefined);
+  assert.strictEqual(budget.atLimit(4), true);
+  assert.strictEqual(budget.allowsAnotherStep(4), false);
 });
 
 test("a turn at its safety ceiling stops even while productive", () => {
@@ -82,26 +140,77 @@ test("a turn at its safety ceiling stops even while productive", () => {
   });
 });
 
-test("a stalled turn stops early, after the stall tolerance", () => {
+test("an unproductive step at the limit ends tool use there, with no chunk", () => {
   const budget = new StepBudget(POLICY);
-  // The first unproductive step at the soft budget gets one more chance.
-  assert.strictEqual(budget.decide(outcome(4, false)).kind, "extended");
-  assert.strictEqual(budget.stalledSteps, 1);
-  // The second consecutive one stops the turn.
-  assert.deepStrictEqual(budget.decide(outcome(5, false)), {
+  // Nothing was earned, so the limit does not move and there is no room for
+  // the next step: the turn ends on the stall rather than burning a step.
+  assert.deepStrictEqual(budget.decide(outcome(4, false)), {
     kind: "stop",
     reason: "stall",
-    effectiveLimit: 4 + extensionChunk(4),
+    effectiveLimit: 4,
   });
+  assert.strictEqual(budget.stalledSteps, 1);
   assert.strictEqual(STALL_STEPS, 2);
+});
+
+test("inside a granted chunk, one unproductive step is tolerated", () => {
+  const budget = new StepBudget(POLICY);
+  assert.strictEqual(budget.decide(outcome(4)).kind, "extended");
+  assert.deepStrictEqual(budget.decide(outcome(5, false)), {
+    kind: "continue",
+  });
+  assert.strictEqual(budget.stalledSteps, 1);
+  // The second in a row ends the turn, at the limit it was running under.
+  assert.deepStrictEqual(budget.decide(outcome(6, false)), {
+    kind: "stop",
+    reason: "stall",
+    effectiveLimit: 6,
+  });
+});
+
+test("an unproductive step never extends the limit", () => {
+  for (const soft of [4, 32]) {
+    const budget = new StepBudget({
+      softLimit: soft,
+      ceiling: 128,
+      extension: true,
+    });
+    const before = budget.effectiveLimit;
+    const decision = budget.decide(outcome(soft, false));
+    assert.strictEqual(
+      decision.kind === "extended",
+      false,
+      `soft ${soft}: an unproductive step extended ${JSON.stringify(decision)}`,
+    );
+    assert.strictEqual(budget.effectiveLimit, before);
+  }
 });
 
 test("one productive step clears the stall streak", () => {
   const budget = new StepBudget(POLICY);
-  budget.decide(outcome(4, false));
+  budget.decide(outcome(4));
+  budget.decide(outcome(5, false));
   assert.strictEqual(budget.stalledSteps, 1);
-  budget.decide(outcome(5, true));
+  budget.decide(outcome(6, true));
   assert.strictEqual(budget.stalledSteps, 0);
+});
+
+test("the stall streak keeps counting past the soft limit, not only at it", () => {
+  const budget = new StepBudget(POLICY);
+  // A productive step at the soft limit extends to 6 and clears the streak.
+  assert.strictEqual(budget.decide(outcome(4)).kind, "extended");
+  // An unproductive step inside the granted chunk counts, without deciding.
+  assert.deepStrictEqual(budget.decide(outcome(5, false)), {
+    kind: "continue",
+  });
+  assert.strictEqual(budget.stalledSteps, 1);
+  assert.strictEqual(budget.effectiveLimit, 6);
+  // The next unproductive step ends the turn at the limit it had.
+  assert.deepStrictEqual(budget.decide(outcome(6, false)), {
+    kind: "stop",
+    reason: "stall",
+    effectiveLimit: 6,
+  });
 });
 
 test("a turn with no spend headroom stops before extending", () => {

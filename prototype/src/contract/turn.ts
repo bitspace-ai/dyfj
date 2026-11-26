@@ -128,7 +128,7 @@ export interface NativeTurnReceipt {
      * spend. Absent when the model ended the turn itself, and from a runtime
      * that predates the progress-aware step budget.
      */
-    stepStopReason?: "limit" | "ceiling" | "stall" | "budget";
+    stepStopReason?: "ceiling" | "stall" | "budget";
     /**
      * How a turn that reached the limit left its handoff: "model" when the
      * handoff call answered, "notice" when the runtime wrote a notice of the

@@ -482,9 +482,14 @@ function runExecuteTurn(
     ...(deps.stepExtension === undefined
       ? {}
       : { stepExtension: deps.stepExtension }),
-    // the request's own limit, checked against the ceiling at resolution
+    // the request's own limit, checked against the ceiling at resolution. A
+    // session's own number is a hard cap the operator chose, so it does not
+    // extend on progress the way the configured default does.
     ...(resolved.maxToolSteps !== undefined
-      ? { maxToolSteps: resolved.maxToolSteps }
+      ? {
+        maxToolSteps: resolved.maxToolSteps,
+        toolStepsOverride: true,
+      }
       : {}),
     authContext: deps.authContext,
     frames: deps.frames,

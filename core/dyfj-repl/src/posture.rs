@@ -356,7 +356,11 @@ fn posture_line_with_models(status: &Value, session: &Session, socket: &str, row
         if let Some(ceiling) = runtime.get("maxToolStepsCeiling").and_then(Value::as_i64) {
             policy.push(format!("ceiling {ceiling}"));
         }
-        if runtime.get("stepExtension").and_then(Value::as_bool) == Some(true) {
+        // A session's own limit is the operator's number, so it is a hard cap:
+        // progress-based extension applies to the configured default only.
+        if session.max_tool_steps.is_some() {
+            policy.push("hard cap".into());
+        } else if runtime.get("stepExtension").and_then(Value::as_bool) == Some(true) {
             policy.push("extends on progress".into());
         }
         if policy.is_empty() {
@@ -520,9 +524,10 @@ mod tests {
         let status = json!({"runtime": {"maxToolSteps": 32, "maxToolStepsCeiling": 48}});
         let rendered = line(&status, &Session::default(), "/tmp/s.sock");
         assert!(rendered.contains("32 tool steps (ceiling 48)"), "{rendered}");
+        // A session's own number is a hard cap, and the line says so.
         let own = Session { max_tool_steps: Some(6), ..Session::default() };
         let rendered = line(&status, &own, "/tmp/s.sock");
-        assert!(rendered.contains("6 tool steps (ceiling 48)"), "{rendered}");
+        assert!(rendered.contains("6 tool steps (ceiling 48, hard cap)"), "{rendered}");
     }
 
     /// A Codex model's line names the effort its next turn runs at: the

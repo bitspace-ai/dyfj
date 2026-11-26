@@ -176,15 +176,15 @@ test("resolveTurnFromBody takes a session's tool-step limit up to the ceiling", 
       error: "maxToolSteps must be a positive integer",
     });
   }
-  // The ceiling defaults to the declared 64 when the caller passes none.
-  match(resolveTurnFromBody({ prompt: "hi", maxToolSteps: 65 }, true), {
+  // The ceiling defaults to the declared 128 when the caller passes none.
+  match(resolveTurnFromBody({ prompt: "hi", maxToolSteps: 129 }, true), {
     status: 400,
-    error: "maxToolSteps 65 is above the tool-step ceiling of 64",
+    error: "maxToolSteps 129 is above the tool-step ceiling of 128",
   });
 });
 
 test("resolveTurnFromBody lets a remote caller lower the tool-step limit but not raise it", () => {
-  const options = { maxToolSteps: 32, maxToolStepsCeiling: 64 };
+  const options = { maxToolSteps: 32, maxToolStepsCeiling: 128 };
   match(resolveTurnFromBody({ prompt: "hi", maxToolSteps: 4 }, false, options), {
     maxToolSteps: 4,
   });
