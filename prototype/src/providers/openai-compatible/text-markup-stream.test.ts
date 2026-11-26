@@ -18,6 +18,7 @@ import {
   DSML_PROSE,
   DSML_UNOFFERED_FIRST_TRUNCATED_SECOND_BLOCK,
   DSML_WITHHELD_UNOFFERED_SECOND_BLOCK,
+  dsmlTruncatedBlockWithNestedQwen,
   dsmlBlock,
   dsmlCharacterChunks,
   dsmlChunksAt,
@@ -1243,13 +1244,15 @@ describe("finish strip and presenter agree on one candidate rule", () => {
   };
 
   it("scales linearly across tens of thousands of withheld deltas", async () => {
-    await measureWithheld(1_000);
-    const small = await measureWithheld(5_000);
-    const large = await measureWithheld(20_000);
-    // Four times the deltas; a presenter that rebuilt the withheld span at each
-    // probe would land near sixteen times the cost.
+    await measureWithheld(2_000);
+    const small = await measureWithheld(10_000);
+    const large = await measureWithheld(40_000);
+    // Four times the deltas. A presenter that rebuilt the withheld span at each
+    // close-tag probe flattens a growing V8 rope and lands near sixteen times
+    // the cost; measured on the superlinear presenter this replaced, 10k to 40k
+    // came out around seventeen times over. Linear reading stays near four.
     assert.ok(
-      large < Math.max(small, 1) * 12,
+      large < Math.max(small, 1) * 10,
       `small ${small.toFixed(1)}ms large ${large.toFixed(1)}ms`,
     );
   });
@@ -1263,5 +1266,58 @@ describe("finish strip and presenter agree on one candidate rule", () => {
     assert.strictEqual(result.text, "before ");
     assert.strictEqual(deltas.join(""), "before ");
     assert.strictEqual(result.toolCalls, undefined);
+  });
+
+  // A truncated DSML block can hold a complete Qwen block in its body: a model
+  // writes a heredoc that embeds a Qwen fixture and then stops mid-block.
+  // Recovery removes the Qwen block independently of the DSML dialect, so the
+  // withheld span is shorter than the distance from its start to the end of the
+  // reply. Measuring that distance against the text with complete calls already
+  // removed cut into forwarded prose, or past the start of the string, and a
+  // live delta that no longer matched the durable text failed the turn. The
+  // nested Qwen call still runs; only the strip's arithmetic changed (BIT-991).
+  const nestedQwenPrefix = "Prose. ";
+  const nestedQwenOf = async (chunks: readonly string[]) => {
+    const [first, ...rest] = chunks;
+    return await streamOf([`${nestedQwenPrefix}${first}`, ...rest], ["bash"]);
+  };
+
+  it("Q1: drops a truncated block holding a short Qwen call", async () => {
+    const block = dsmlTruncatedBlockWithNestedQwen("ls");
+    const cut = 20;
+    const { result, deltas } = await nestedQwenOf([
+      block.slice(0, cut),
+      block.slice(cut),
+    ]);
+
+    assert.strictEqual(result.text, nestedQwenPrefix);
+    assert.strictEqual(deltas.join(""), result.text);
+    assert.ok(!result.text.includes(DSML_PIPE), result.text);
+  });
+
+  it("Q2: drops a truncated block holding a long Qwen call", async () => {
+    const command = "node --test prototype/src/providers/shared/" +
+      "text-tool-calls.test.ts 2>&1 | tail -12";
+    const block = dsmlTruncatedBlockWithNestedQwen(command);
+    const cut = 20;
+    const { result, deltas } = await nestedQwenOf([
+      block.slice(0, cut),
+      block.slice(cut),
+    ]);
+
+    assert.strictEqual(result.text, nestedQwenPrefix);
+    assert.strictEqual(deltas.join(""), result.text);
+    assert.ok(!result.text.includes(DSML_PIPE), result.text);
+  });
+
+  it("Q3: drops it when the whole reply arrives in one delta", async () => {
+    const command = "node --test prototype/src/providers/shared/" +
+      "text-tool-calls.test.ts 2>&1 | tail -12";
+    const block = dsmlTruncatedBlockWithNestedQwen(command);
+    const { result, deltas } = await nestedQwenOf([block]);
+
+    assert.strictEqual(result.text, nestedQwenPrefix);
+    assert.strictEqual(deltas.join(""), result.text);
+    assert.ok(!result.text.includes(DSML_PIPE), result.text);
   });
 });

@@ -677,28 +677,37 @@ export function stripIncompleteTextToolCallSuffix(
   if (!tools || tools.length === 0) return text;
   if (exceedsTextToolMarkupCandidateLimits(text)) return text;
   const offered = new Set(toolWireNames(tools).map(({ wire }) => wire));
-  const extraction = extractTextToolCallsInternal(
-    text,
-    offered,
-    true,
-  );
-  if (extraction.unrecoverable) return text;
-  const withoutCompleteCalls = extraction.cleaned;
-  // Both cuts are decided on the text as it arrived, not on the text with the
-  // complete blocks already removed: the undecided reading measures a candidate
-  // against the distance to the end of the reply, and removing blocks earlier
-  // in the reply would shorten that distance and cut prose the presenter
-  // forwarded. A cut is always at the end of the text - a truncated block runs
-  // to it - so the same cut in `withoutCompleteCalls` is that many characters
-  // from its end.
   const dsmlCut = dsmlTruncatedBlockStart(text, offered);
-  const dsmlKeep = dsmlCut < 0
-    ? withoutCompleteCalls.length
-    : withoutCompleteCalls.length - (text.length - dsmlCut);
+  // A withheld DSML block runs to the end of the reply, so nothing after its
+  // start was forwarded - but recovery also removes complete calls that sit
+  // *inside* that withheld span, because it reads each dialect independently of
+  // the other. The withheld suffix is therefore not `text.length - dsmlCut`
+  // characters of the text with complete calls removed; it is shorter by
+  // whatever was removed inside it, which is how the cut once landed inside
+  // forwarded prose or past the start of the string. Strip the prefix alone, so
+  // no removed span can sit past the cut.
+  const source = dsmlCut < 0 ? text : text.slice(0, dsmlCut);
+  return stripCompleteCallsAndIncompleteQwenSuffix(source, tools, offered) ??
+    text;
+}
+
+/**
+ * The delivered text for one span: every complete recovered call removed, then
+ * any trailing incomplete Qwen call. Undefined when recovery found markup it
+ * could not run, which leaves the caller to decide what to deliver.
+ */
+function stripCompleteCallsAndIncompleteQwenSuffix(
+  text: string,
+  tools: WorkbenchToolDefinition[],
+  offered: ReadonlySet<string>,
+): string | undefined {
+  const extraction = extractTextToolCallsInternal(text, offered, true);
+  if (extraction.unrecoverable) return undefined;
+  const withoutCompleteCalls = extraction.cleaned;
   const confirmed = qwenConfirmedMarkupStart(withoutCompleteCalls, tools);
   const incomplete = confirmed >= 0
     ? confirmed
     : recognizedIncompleteTextToolMarkupStart(withoutCompleteCalls, tools);
   const qwenKeep = incomplete < 0 ? withoutCompleteCalls.length : incomplete;
-  return withoutCompleteCalls.slice(0, Math.min(qwenKeep, dsmlKeep));
+  return withoutCompleteCalls.slice(0, qwenKeep);
 }

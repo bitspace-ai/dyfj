@@ -164,6 +164,36 @@ export const DSML_WITHHELD_UNOFFERED_SECOND_BLOCK =
   `${dsmlTag("spaced", "parameter", ' name="x" string="true"')}v` +
   `${dsmlCloseTag("spaced", "parameter")}\n`;
 
+/**
+ * A Qwen `<tool_call>` block naming `bash`, as a model writes it in text.
+ *
+ * The separator-wrapped DSML tags are assembled by `dsmlTag`, so no fixture
+ * holds a separator-wrapped `DSML` run as a literal in its source text.
+ */
+export function qwenBashBlock(command: string): string {
+  return `<tool_call><function=bash><parameter=command>${command}` +
+    `</parameter></function></tool_call>`;
+}
+
+/**
+ * A truncated block whose first invoke names the offered `bash`, so a reader
+ * withholds it, and whose `command` value holds a *complete* Qwen block. The
+ * reply ends inside the DSML block with no closing tags, which is the shape a
+ * model leaves when it writes a heredoc that embeds a Qwen fixture and then
+ * stops.
+ *
+ * Recovery removes the Qwen block independently of the DSML dialect, so the
+ * withheld span is shorter than the distance from its start to the end of the
+ * reply. A strip that measured that distance against the text with complete
+ * calls already removed cut into prose, or past the start of the string.
+ */
+export function dsmlTruncatedBlockWithNestedQwen(command: string): string {
+  return `${dsmlTag("spaced", "calls")}\n` +
+    `${dsmlTag("spaced", "invoke", ' name="bash"')}\n` +
+    `${dsmlTag("spaced", "parameter", ' name="command" string="true"')}` +
+    `cat > f <<X\n${qwenBashBlock(command)}\nmore`;
+}
+
 /** Prose to place before a block in a mixed reply. */
 export const DSML_PROSE = "Let me check that.";
 
