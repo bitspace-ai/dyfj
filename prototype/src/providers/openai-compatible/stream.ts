@@ -20,13 +20,17 @@ import {
 import {
   confirmedTextToolMarkupStart,
   countNewTextToolMarkupCandidates,
+  dsmlPossibleStart,
+  dsmlRecoverableStart,
   extractTextToolCallsInternal,
+  MAX_DSML_MARKUP_TOKENS,
   MAX_TEXT_TOOL_MARKUP_CANDIDATES,
   possibleTextToolMarkupStart,
   stripIncompleteTextToolCallSuffix,
   TEXT_FUNCTION_MARKER,
   TEXT_PARAMETER_MARKER,
 } from "../shared/text-tool-calls.ts";
+import { DSML_MARKER_COUNT, dsmlBlockEnd } from "../shared/dsml-tool-calls.ts";
 import { finiteNonnegativeTokenCount } from "../shared/tokens.ts";
 import { toolWireNames } from "../shared/tool-names.ts";
 import {
@@ -301,11 +305,14 @@ function createTextPresenter(
   let textToolRecoveryDisabled = !tools || tools.length === 0;
   let functionCandidates = 0;
   let parameterCandidates = 0;
+  let dsmlCandidates = 0;
   let functionCandidateTail = "";
   let parameterCandidateTail = "";
+  let dsmlCandidateTail = "";
   let forwardedLength = 0;
   let forwardedText = "";
   let closingSearchFrom = 0;
+  let suppressingDsml = false;
 
   const offeredNames = tools
     ? new Set(toolWireNames(tools).map(({ wire }) => wire))
@@ -323,6 +330,25 @@ function createTextPresenter(
         return;
       }
       if (suppressing) {
+        if (suppressingDsml) {
+          const end = dsmlBlockEnd(text, forwardedLength);
+          if (end < 0) return;
+          const candidate = text.slice(forwardedLength, end);
+          const extraction = extractTextToolCallsInternal(
+            candidate,
+            offeredNames,
+            true,
+          );
+          if (extraction.unrecoverable || extraction.toolCalls.length === 0) {
+            emitTextDelta(candidate);
+          } else {
+            sawTextToolMarkup = true;
+          }
+          forwardedLength = end;
+          suppressing = false;
+          suppressingDsml = false;
+          continue;
+        }
         const closing = text.indexOf("</tool_call>", closingSearchFrom);
         if (closing < 0) {
           closingSearchFrom = Math.max(
@@ -349,18 +375,26 @@ function createTextPresenter(
         continue;
       }
       const pending = text.slice(forwardedLength);
-      const confirmed = confirmedTextToolMarkupStart(pending, tools);
-      if (confirmed >= 0) {
-        if (confirmed > 0) {
-          emitTextDelta(pending.slice(0, confirmed));
-          forwardedLength += confirmed;
+      const qwenStart = confirmedTextToolMarkupStart(pending, tools);
+      const dsmlStart = dsmlRecoverableStart(pending, offeredNames);
+      const markupStart = qwenStart >= 0 ? qwenStart : dsmlStart;
+      if (markupStart >= 0) {
+        if (markupStart > 0) {
+          emitTextDelta(pending.slice(0, markupStart));
+          forwardedLength += markupStart;
         }
         suppressing = true;
+        suppressingDsml = qwenStart < 0;
         closingSearchFrom = forwardedLength;
         continue;
       }
-      const possible = possibleTextToolMarkupStart(pending, tools);
-      const safeEnd = possible >= 0 ? forwardedLength + possible : text.length;
+      const safeStarts = [
+        possibleTextToolMarkupStart(pending, tools),
+        dsmlPossibleStart(pending, offeredNames),
+      ].filter((start) => start >= 0);
+      const safeEnd = safeStarts.length === 0
+        ? text.length
+        : forwardedLength + Math.min(...safeStarts);
       if (safeEnd > forwardedLength) {
         emitTextDelta(text.slice(forwardedLength, safeEnd));
         forwardedLength = safeEnd;
@@ -392,13 +426,22 @@ function createTextPresenter(
         );
         parameterCandidateTail = parameterUpdate.tail;
         parameterCandidates += parameterUpdate.count;
+        const dsmlUpdate = countNewTextToolMarkupCandidates(
+          dsmlCandidateTail,
+          delta,
+          DSML_MARKER_COUNT,
+          MAX_DSML_MARKUP_TOKENS - dsmlCandidates,
+        );
+        dsmlCandidateTail = dsmlUpdate.tail;
+        dsmlCandidates += dsmlUpdate.count;
       }
       text += delta;
       if (
         !textToolRecoveryDisabled &&
         (
           functionCandidates > MAX_TEXT_TOOL_MARKUP_CANDIDATES ||
-          parameterCandidates > MAX_TEXT_TOOL_MARKUP_CANDIDATES
+          parameterCandidates > MAX_TEXT_TOOL_MARKUP_CANDIDATES ||
+          dsmlCandidates > MAX_DSML_MARKUP_TOKENS
         )
       ) {
         if (sawTextToolMarkup) {
@@ -408,6 +451,7 @@ function createTextPresenter(
         }
         textToolRecoveryDisabled = true;
         suppressing = false;
+        suppressingDsml = false;
       }
       forwardAvailableText();
     },

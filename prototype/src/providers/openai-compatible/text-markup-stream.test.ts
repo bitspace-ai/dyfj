@@ -8,6 +8,16 @@ import { describe, it } from "node:test";
 import { ScriptedHttpTransport } from "../../../testing/fakes/scripted-http-transport.ts";
 import { runWorkbenchTurn } from "../mod.ts";
 import { providerTestModels } from "../../../testing/builders/models.ts";
+import {
+  DSML_BASH_BLOCK,
+  DSML_BASH_COMMAND,
+  DSML_GATE_RUN,
+  DSML_GATE_WAIT_BLOCK,
+  DSML_PROSE,
+  dsmlBlock,
+  dsmlPartialBlock,
+  DSML_PIPE,
+} from "../../../testing/providers/dsml-fixtures.ts";
 
 const models = [...providerTestModels];
 function sse(chunks: unknown[]): string {
@@ -560,5 +570,210 @@ describe("runWorkbenchTurn streaming", () => {
 
     assert.strictEqual(deltas.join(""), prefix);
     assert.strictEqual(result.text, prefix);
+  });
+});
+
+// A DeepSeek model may write its native tool-call markup as message text. The
+// markup must never reach the operator's live output: it is withheld while the
+// block streams and stripped once recovery runs (BIT-991).
+const dsmlTool = (name: string) => ({
+  name,
+  description: `${name} tool.`,
+  parameters: { type: "object" },
+});
+
+describe("DeepSeek DSML markup in streamed text", () => {
+  it("withholds a DSML block split across deltas until it closes", async () => {
+    const deltas: string[] = [];
+    const text = `${DSML_PROSE} ${DSML_GATE_WAIT_BLOCK}`;
+    const cut = DSML_PROSE.length + 1 + 40;
+    const transport = new ScriptedHttpTransport([{
+      respond: {
+        body: sse([
+          { choices: [{ delta: { content: text.slice(0, cut) } }] },
+          { choices: [{ delta: { content: text.slice(cut) } }] },
+          { choices: [{ delta: {}, finish_reason: "stop" }] },
+        ]),
+      },
+    }]);
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "wait for the gate",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      tools: [dsmlTool("gate/wait")],
+      onTextDelta: (delta) => deltas.push(delta),
+      fetchFn: transport.fetch,
+    });
+    transport.assertDone();
+
+    assert.deepStrictEqual(result.toolCalls, [{
+      id: "text-tool-1",
+      name: "gate/wait",
+      arguments: { run: DSML_GATE_RUN, wait_seconds: 60 },
+    }]);
+    assert.strictEqual(result.text, `${DSML_PROSE} `);
+    assert.strictEqual(deltas.join(""), `${DSML_PROSE} `);
+  });
+
+  it("resumes streamed prose right after a closed DSML block", async () => {
+    const deltas: string[] = [];
+    const before = "Checking. ";
+    const after = " Done.";
+    const transport = new ScriptedHttpTransport([{
+      respond: {
+        body: sse([
+          { choices: [{ delta: { content: `${before}${DSML_BASH_BLOCK}` } }] },
+          { choices: [{ delta: { content: after } }] },
+          { choices: [{ delta: {}, finish_reason: "stop" }] },
+        ]),
+      },
+    }]);
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "run the tests",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      tools: [dsmlTool("bash")],
+      onTextDelta: (delta) => deltas.push(delta),
+      fetchFn: transport.fetch,
+    });
+    transport.assertDone();
+
+    assert.deepStrictEqual(result.toolCalls, [{
+      id: "text-tool-1",
+      name: "bash",
+      arguments: { command: DSML_BASH_COMMAND },
+    }]);
+    assert.strictEqual(deltas.join(""), `${before}${after}`);
+    assert.strictEqual(result.text, `${before}${after}`);
+  });
+
+  it("shows DSML prose for an unoffered tool instead of hiding it", async () => {
+    const deltas: string[] = [];
+    const transport = new ScriptedHttpTransport([{
+      respond: {
+        body: sse([
+          { choices: [{ delta: { content: DSML_GATE_WAIT_BLOCK } }] },
+          { choices: [{ delta: {}, finish_reason: "stop" }] },
+        ]),
+      },
+    }]);
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "explain the markup",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      tools: [dsmlTool("bash")],
+      onTextDelta: (delta) => deltas.push(delta),
+      fetchFn: transport.fetch,
+    });
+    transport.assertDone();
+
+    assert.strictEqual(result.toolCalls, undefined);
+    assert.strictEqual(result.text, DSML_GATE_WAIT_BLOCK);
+    assert.strictEqual(deltas.join(""), DSML_GATE_WAIT_BLOCK);
+  });
+
+  it("flags a DSML block left in the text when no tools are offered", async () => {
+    const deltas: string[] = [];
+    const transport = new ScriptedHttpTransport([{
+      respond: {
+        body: sse([
+          { choices: [{ delta: { content: DSML_BASH_BLOCK } }] },
+          { choices: [{ delta: {}, finish_reason: "stop" }] },
+        ]),
+      },
+    }]);
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "run the tests",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      onTextDelta: (delta) => deltas.push(delta),
+      fetchFn: transport.fetch,
+    });
+    transport.assertDone();
+
+    assert.strictEqual(result.toolCalls, undefined);
+    assert.strictEqual(result.text, DSML_BASH_BLOCK);
+    assert.strictEqual(deltas.join(""), DSML_BASH_BLOCK);
+    assert.deepStrictEqual(result.unparsedToolCallMarkup, {
+      count: 1,
+      countIsLowerBound: false,
+    });
+  });
+
+  it("does not treat a DSML word in ordinary prose as markup", async () => {
+    const text = `The separators are ${DSML_PIPE} and | in this dialect.`;
+    const deltas: string[] = [];
+    const transport = new ScriptedHttpTransport([{
+      respond: {
+        body: sse([
+          { choices: [{ delta: { content: text } }] },
+          { choices: [{ delta: {}, finish_reason: "stop" }] },
+        ]),
+      },
+    }]);
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "explain separators",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      tools: [dsmlTool("bash")],
+      onTextDelta: (delta) => deltas.push(delta),
+      fetchFn: transport.fetch,
+    });
+    transport.assertDone();
+
+    assert.strictEqual(result.text, text);
+    assert.strictEqual(deltas.join(""), text);
+    assert.strictEqual(result.toolCalls, undefined);
+    assert.strictEqual(result.unparsedToolCallMarkup, undefined);
+  });
+
+  it("a partial DSML block on abort leaves no markup in live or durable text", async () => {
+    const abortController = new AbortController();
+    const deltas: string[] = [];
+    let received!: () => void;
+    const sawText = new Promise<void>((resolve) => {
+      received = resolve;
+    });
+    const prefix = "Checking. ";
+    const text = `${prefix}${
+      dsmlPartialBlock("spaced", "bash", [
+        ["command", ' string="true"', DSML_BASH_COMMAND],
+      ])
+    }`;
+    const transport = new ScriptedHttpTransport([{
+      respond: {
+        body: `data: ${
+          JSON.stringify({ choices: [{ delta: { content: text } }] })
+        }\n`,
+        holdOpen: true,
+      },
+    }]);
+    const pending = runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "run the tests",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      abortSignal: abortController.signal,
+      tools: [dsmlTool("bash")],
+      onTextDelta: (delta) => {
+        deltas.push(delta);
+        received();
+      },
+      fetchFn: transport.fetch,
+    });
+
+    await sawText;
+    abortController.abort();
+    const result = await pending;
+    transport.assertDone();
+
+    assert.strictEqual(deltas.join(""), prefix);
+    assert.strictEqual(result.text, prefix);
+    assert.strictEqual(result.toolCalls, undefined);
   });
 });

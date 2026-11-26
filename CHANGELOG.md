@@ -11,6 +11,37 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **DeepSeek DSML text tool-call markup is recovered, and its markup no longer
+  reaches the operator as prose (`BIT-991`).** A DeepSeek model served through
+  an OpenAI-compatible route sometimes writes its native tool-call markup into
+  the message text instead of a structured `tool_calls` array. That dialect
+  wraps one or more invokes in a `calls` (or `function_calls`) element, and
+  spells every tag as `<`, a separator, `DSML`, the same separator, an optional
+  space, then the element name: a fullwidth vertical bar in the replies
+  captured live, and possibly the ASCII pipe on another tokenizer. The new
+  `providers/shared/dsml-tool-calls.ts` parses that dialect and recovers a
+  complete block whose invokes all name a tool the request offered, so the
+  turn runs the call and strips the markup from the text. An invoke name
+  resolves through the same wire-name mapping as a structured call
+  (`gate_wait` reaches `gate/wait`), a `parameter` marked `string="true"` is
+  literal text (multiline command lines included), and one marked
+  `string="false"` is JSON and must parse, so numbers, booleans, objects and
+  arrays arrive typed. `providers/shared/text-tool-calls.ts` composes the two
+  dialects: recovery returns whichever markup came first in the text, and the
+  unparsed-markup count now also reports a DSML block left unrun — a whole
+  block left in the text, or one the reply cuts off once it has revealed DSML
+  structure past its opening — rather than treating it as an answer. The
+  streaming presenter withholds a DSML block as it arrives, so the raw markup
+  never flashes to the terminal, and an aborted turn strips a DSML block it had
+  withheld. Every scan stays linear and bounded: the separator-wrapped marker
+  count is capped at the same per-element candidate limit as the Qwen dialect
+  scaled to that dialect's tokens per element, and the whole-text scan keeps
+  the accepted-response bound. The bounds, the argument-budget helper and its
+  coercion moved into `providers/shared/text-markup-bounds.ts` and
+  `providers/shared/text-markup-arguments.ts` so no module in the recovery path
+  grows past the module-size limit. The Qwen `<tool_call>` recovery and
+  detection behavior is unchanged, pinned by its existing tests.
+
 - **Progress-aware tool-step budget (`BIT-992`).** A native turn's tool steps
   were bounded by one fixed number, so a productive turn working through a repo
   was interrupted mid-stride while its dollar budgets were nowhere near spent.
