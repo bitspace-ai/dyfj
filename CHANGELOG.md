@@ -52,23 +52,27 @@ README are tracked separately in its Revision history section.
   markup-shaped text in ordinary prose costs no more than that bound. Every
   scan stays linear and bounded: the marker counted is the separator-wrapped
   run that opens a tag, not the bare element name, so a reply that discusses
-  the dialect in prose spends none of the bound and only real tags do; that
-  count is capped at the same per-element candidate limit as the Qwen dialect
-  scaled to that dialect's tokens per element, a withheld block's chunks are
-  held in an array and only a carried tail window plus the newly arrived
-  characters is probed for the close tag, so wall-clock time stays linear
-  across tens of thousands of deltas, the block's end is read once per block
-  rather than once per delta, the presenter scans only the text it has not
-  decided yet rather than the whole reply at each delta, and the whole-text
-  scan keeps the accepted-response bound. The bounds, the argument-budget
-  helper and its coercion moved into
+  the dialect in prose spends none of the bound and only separator-wrapped runs
+  do, overlapping runs included so the count does not depend on how the reply
+  is chunked; that count is capped at the same per-element candidate limit as
+  the Qwen dialect scaled to that dialect's tokens per element, a withheld
+  block's chunks are held in an array and only a carried tail window plus the
+  newly arrived characters is probed for the close tag, so wall-clock time
+  stays linear across tens of thousands of deltas, the block's end is read once
+  per block rather than once per delta, the presenter scans only the text it
+  has not decided yet rather than the whole reply at each delta, and the
+  whole-text scan keeps the accepted-response bound. The bounds, the
+  argument-budget helper and its coercion moved into
   `providers/shared/text-markup-bounds.ts` and
   `providers/shared/text-markup-arguments.ts` so no module in the recovery path
   grows past the module-size limit. The Qwen `<tool_call>` reading keeps the
   behavior it had before this dialect joined it, pinned by its existing tests:
   an offered Qwen call whose arguments cannot be typed still fails that whole
   reading closed, so no Qwen call from such a reply runs and its markup stays
-  in the text, while a DSML block read independently is still recovered.
+  in the text, while a DSML block read independently is still recovered. That
+  retained markup is never mistaken for a call the reply cut off: a finish
+  strip that saw it as an incomplete suffix would cut text the stream already
+  forwarded and fail the turn.
 
 - **Progress-aware tool-step budget (`BIT-992`).** A native turn's tool steps
   were bounded by one fixed number, so a productive turn working through a repo

@@ -244,7 +244,10 @@ function exceedsTextToolMarkupCandidateLimitsFor(
       if (found < 0) break;
       count++;
       if (count > limit) return true;
-      searchFrom = found + marker.length;
+      // Overlapping occurrences count: adjacent runs share a separator, so
+      // `|DSML|DSML|` holds two markers, and the streaming counter (which
+      // re-reads its carried tail) must agree with this whole-text one.
+      searchFrom = found + 1;
     }
   }
   return false;
@@ -290,7 +293,10 @@ export function countNewTextToolMarkupCandidates(
       if (found < 0) break;
       count++;
       if (count > remaining) break;
-      searchFrom = found + marker.length;
+      // Step one character, so overlapping runs count the same here as in the
+      // whole-text scan; the carried tail is what keeps a marker that straddles
+      // a delta boundary from being counted twice.
+      searchFrom = found + 1;
     }
     if (count > remaining) break;
   }
@@ -411,9 +417,21 @@ export function extractTextToolCallsInternal(
   toolCalls: WorkbenchToolCall[];
   cleaned: string;
   unrecoverable: boolean;
+  /**
+   * The Qwen reading failed closed: an offered call's arguments could not be
+   * typed, so no Qwen call was returned and the Qwen markup is still in
+   * `cleaned`. A caller that reads a suffix must know this, because a complete
+   * Qwen block retained here is *not* an incomplete call the reply cut off.
+   */
+  qwenUnrecoverable: boolean;
 } {
   if (exceedsTextToolMarkupCandidateLimits(text)) {
-    return { toolCalls: [], cleaned: text, unrecoverable: false };
+    return {
+      toolCalls: [],
+      cleaned: text,
+      unrecoverable: false,
+      qwenUnrecoverable: false,
+    };
   }
   const qwen = qwenToolCallBlocks(text, offeredNames);
   const dsml = extractDsmlToolCalls(text, offeredNames);
@@ -432,7 +450,14 @@ export function extractTextToolCallsInternal(
     kept.push(block);
     through = block.end;
   }
-  if (kept.length === 0) return { toolCalls: [], cleaned: text, unrecoverable };
+  if (kept.length === 0) {
+    return {
+      toolCalls: [],
+      cleaned: text,
+      unrecoverable,
+      qwenUnrecoverable: qwen.unrecoverable,
+    };
+  }
   const retained: string[] = [];
   let retainedThrough = 0;
   for (const block of kept) {
@@ -449,7 +474,12 @@ export function extractTextToolCallsInternal(
       arguments: call.arguments,
     })),
     cleaned: preserveWhitespace ? retainedText : retainedText.trim(),
+    // A DSML block that recovered does not make an unreadable Qwen reply
+    // recoverable: `unrecoverable` speaks for the whole reply, and the caller
+    // is told about the Qwen failure separately so it can leave that markup
+    // alone.
     unrecoverable: false,
+    qwenUnrecoverable: qwen.unrecoverable,
   };
 }
 
@@ -740,6 +770,10 @@ function stripCompleteCallsAndIncompleteQwenSuffix(
   const extraction = extractTextToolCallsInternal(text, offered, true);
   if (extraction.unrecoverable) return undefined;
   const withoutCompleteCalls = extraction.cleaned;
+  // When the Qwen reading failed closed its markup is complete and stays in the
+  // text by design, so there is no incomplete Qwen suffix to cut: reading it as
+  // one would cut a block the presenter already forwarded.
+  if (extraction.qwenUnrecoverable) return withoutCompleteCalls;
   const confirmed = qwenConfirmedMarkupStart(withoutCompleteCalls, tools);
   const incomplete = confirmed >= 0
     ? confirmed

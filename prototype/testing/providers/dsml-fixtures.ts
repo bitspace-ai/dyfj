@@ -215,6 +215,17 @@ export function dsmlClosedMalformedBlockWithNestedQwen(command: string): string 
     `${dsmlCloseTag("spaced", "calls")}`;
 }
 
+/**
+ * A complete Qwen `<tool_call>` block naming the offered `bash` whose argument
+ * cannot be typed: 65 nested arrays pass the canonical-JSON depth budget, so a
+ * reader fails the whole Qwen reading closed rather than guessing at the value.
+ * The markup is complete and stays in the text, which is why a reader that
+ * reads a suffix must not mistake it for a call the reply cut off.
+ */
+export function qwenUnrecoverableBashBlock(): string {
+  return qwenBashBlock("[".repeat(65));
+}
+
 /** The separator-wrapped run one DSML tag carries, as prose may quote it. */
 export const DSML_MARKER = `${DSML_PIPE}DSML${DSML_PIPE}`;
 

@@ -24,7 +24,9 @@ import {
   dsmlCharacterChunks,
   dsmlChunksAt,
   dsmlPartialBlock,
+  dsmlBlock,
   dsmlTag,
+  qwenUnrecoverableBashBlock,
 } from "../../../testing/providers/dsml-fixtures.ts";
 
 const models = [...providerTestModels];
@@ -1111,6 +1113,79 @@ describe("markup-shaped prose beside a recovered DSML block", () => {
 // tool is prose the presenter already forwarded, even when a later invoke the
 // reply cuts off inside would prefix an offered name, so the strip must leave
 // it alone (BIT-991).
+// A reply can carry a DSML block recovery runs *and* a complete Qwen call whose
+// arguments cannot be typed. The Qwen reading fails closed, so no Qwen call
+// runs and its markup stays in the text - which means it is not an incomplete
+// suffix, and the finish strip must not cut it. Reading it as one cut a block
+// the presenter had already forwarded and failed the turn (BIT-991).
+describe("a failed-closed Qwen block beside a recovered DSML block", () => {
+  const streamOf = async (chunks: readonly string[], toolNames: string[]) => {
+    const deltas: string[] = [];
+    const transport = new ScriptedHttpTransport([{
+      respond: {
+        body: sse([
+          ...chunks.map((content) => ({ choices: [{ delta: { content } }] })),
+          { choices: [{ delta: {}, finish_reason: "stop" }] },
+        ]),
+      },
+    }]);
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "continue",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      tools: toolNames.map(dsmlTool),
+      onTextDelta: (delta) => deltas.push(delta),
+      fetchFn: transport.fetch,
+    });
+    transport.assertDone();
+    return { result, deltas };
+  };
+  const dsmlCall = {
+    id: "text-tool-1",
+    name: "bash",
+    arguments: { command: DSML_BASH_COMMAND },
+  };
+  const expectBoth = (
+    result: Awaited<ReturnType<typeof streamOf>>["result"],
+    deltas: readonly string[],
+    expectedText: string,
+  ) => {
+    assert.deepStrictEqual(result.toolCalls, [dsmlCall]);
+    assert.strictEqual(result.text, expectedText);
+    assert.strictEqual(deltas.join(""), result.text);
+    // The Qwen markup stays visible: its call never ran, so hiding it would
+    // lose text the reply actually contained.
+    assert.ok(result.text.includes("<tool_call>"), result.text);
+  };
+
+  it("keeps the Qwen markup when the failed-closed block comes first", async () => {
+    const block = qwenUnrecoverableBashBlock();
+    const text = `${block}\n${DSML_BASH_BLOCK}`;
+    const { result, deltas } = await streamOf([text], ["bash"]);
+
+    expectBoth(result, deltas, `${block}\n`);
+  });
+
+  it("keeps it when the recovered block comes first", async () => {
+    const block = qwenUnrecoverableBashBlock();
+    const text = `${DSML_BASH_BLOCK}\n${block}`;
+    const { result, deltas } = await streamOf([text], ["bash"]);
+
+    expectBoth(result, deltas, `\n${block}`);
+  });
+
+  it("keeps it when the reply is cut into small deltas", async () => {
+    const block = qwenUnrecoverableBashBlock();
+    const text = `${block}\n${DSML_BASH_BLOCK}`;
+    const chunks: string[] = [];
+    for (let i = 0; i < text.length; i += 7) chunks.push(text.slice(i, i + 7));
+    const { result, deltas } = await streamOf(chunks, ["bash"]);
+
+    expectBoth(result, deltas, `${block}\n`);
+  });
+});
+
 describe("finish strip and presenter agree on one candidate rule", () => {
   const streamOf = async (chunks: readonly string[], toolNames: string[]) => {
     const deltas: string[] = [];
@@ -1340,6 +1415,27 @@ describe("finish strip and presenter agree on one candidate rule", () => {
     // text instead of running.
     assert.strictEqual(result.toolCalls, undefined);
     assert.strictEqual(result.text, `${markers}${DSML_BASH_BLOCK}`);
+  });
+
+  it("refuses overlapping runs the same way in one delta and small deltas", async () => {
+    // Adjacent runs share a separator, so `|DSML|DSML|` holds two markers. The
+    // whole-text scan and the streaming counter must agree on that, or the same
+    // reply is refused when it arrives whole and parsed when it arrives in
+    // pieces (BIT-991).
+    const overlapping = `${"|DSML|"}${"DSML|".repeat(600)}`;
+    const asciiBlock = dsmlBlock("ascii", "bash", [
+      ["command", ' string="true"', "ls"],
+    ]);
+    const text = `${overlapping}\n${asciiBlock}`;
+    const chunks: string[] = [];
+    for (let i = 0; i < text.length; i += 5) chunks.push(text.slice(i, i + 5));
+
+    for (const pieces of [[text], chunks]) {
+      const { result, deltas } = await streamOf(pieces, ["bash"]);
+      assert.strictEqual(result.toolCalls, undefined);
+      assert.strictEqual(result.text, text);
+      assert.strictEqual(deltas.join(""), text);
+    }
   });
 
   it("counts a separator-wrapped marker split across deltas", async () => {

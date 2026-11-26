@@ -8,7 +8,9 @@ import {
   dsmlBlock,
   dsmlTag,
 } from "../../../testing/providers/dsml-fixtures.ts";
+import { DSML_MARKER_COUNTS } from "./dsml-tool-calls.ts";
 import {
+  countNewTextToolMarkupCandidates,
   detectUnparsedToolCallMarkup,
   extractTextToolCalls,
   MAX_UNPARSED_TOOL_CALL_SCAN_CHARACTERS,
@@ -298,14 +300,10 @@ describe("detectUnparsedToolCallMarkup", () => {
   });
 });
 
-// The DSML dialect joined Qwen recovery in BIT-991. Two properties of the Qwen
-// reading predate it and must survive: an offered call whose arguments cannot
-// be typed fails the whole Qwen reading closed, and the marker bound is spent
-// on markup rather than on prose that merely names the dialect.
-// The DSML marker bound is spent on markup, not on prose that names the
-// dialect. A reply that merely discusses DSML must still have its real block
-// recovered, and a reply that holds separator-wrapped markers past the bound is
-// still refused rather than parsed.
+// The marker bound is spent on markup, not on prose that names the dialect. A
+// reply that merely discusses DSML must still have its real block recovered,
+// and a reply that holds separator-wrapped markers past the bound is still
+// refused rather than parsed.
 describe("DSML marker bound counts separator-wrapped runs", () => {
   const mentions = (count: number) => `The ${"DSML"} marker. `.repeat(count);
 
@@ -356,6 +354,51 @@ describe("DSML marker bound counts separator-wrapped runs", () => {
       count: 1,
       countIsLowerBound: true,
     });
+  });
+});
+
+// The DSML dialect joined Qwen recovery in BIT-991. This property of the Qwen
+// reading predates it and must survive: an offered call whose arguments cannot
+// be typed fails the whole Qwen reading closed, while a DSML block read
+// independently is still recovered.
+// Adjacent runs share a separator, so `|DSML|DSML|` holds two markers. Both the
+// whole-text scan and the streaming counter step one character past a match, so
+// the same text is refused however it is chunked; stepping a whole marker
+// counted half of an overlapping run and let a reply past the bound be parsed.
+describe("overlapping separator-wrapped runs count once each", () => {
+  const overlapping = `${"|DSML|"}${"DSML|".repeat(600)}`;
+  const asciiBlock = dsmlBlock("ascii", "bash", [
+    ["command", ' string="true"', "ls"],
+  ]);
+
+  it("refuses overlapping runs in one piece of text", () => {
+    const text = `${overlapping}\n${asciiBlock}`;
+    const { toolCalls, cleaned } = extractTextToolCalls(
+      text,
+      new Set(["bash"]),
+    );
+    assert.deepStrictEqual(toolCalls, []);
+    assert.strictEqual(cleaned, text);
+  });
+
+  it("counts them the same when they arrive in small deltas", () => {
+    const chunks: string[] = [];
+    for (let i = 0; i < overlapping.length; i += 5) {
+      chunks.push(overlapping.slice(i, i + 5));
+    }
+    let count = 0;
+    let tail = "";
+    for (const chunk of chunks) {
+      const update = countNewTextToolMarkupCandidates(
+        tail,
+        chunk,
+        DSML_MARKER_COUNTS,
+        600,
+      );
+      tail = update.tail;
+      count += update.count;
+    }
+    assert.strictEqual(count, 601);
   });
 });
 
