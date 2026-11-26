@@ -807,6 +807,22 @@ describe("DeepSeek DSML textual tool calls", () => {
     });
   });
 
+  it("keeps a string=true value's own leading and trailing newlines", async () => {
+    const body = "\nline one\nline two\n\n";
+    const block = dsmlBlock("spaced", "bash", [
+      ["command", ' string="true"', body],
+    ]);
+    const { transport, run } = dsmlTurn(block, [dsmlTool("bash")]);
+    const result = await run();
+    transport.assertDone();
+
+    assert.deepStrictEqual(result.toolCalls, [{
+      id: "text-tool-1",
+      name: "bash",
+      arguments: { command: body },
+    }]);
+  });
+
   it("recovers a DSML call from a streamed reply and strips it from the deltas", async () => {
     const deltas: string[] = [];
     const { transport, run } = dsmlTurn(

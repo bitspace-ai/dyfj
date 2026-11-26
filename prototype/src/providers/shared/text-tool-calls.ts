@@ -27,6 +27,7 @@ import {
   toolArgumentWithinBudget,
 } from "./text-markup-arguments.ts";
 import {
+  MAX_DSML_MARKUP_TOKENS,
   MAX_TEXT_TOOL_MARKUP_CANDIDATES,
   MAX_TEXT_TOOL_WRAPPER_WHITESPACE,
   MAX_UNPARSED_TOOL_CALL_MARKERS,
@@ -35,16 +36,12 @@ import {
 import { toolWireNames } from "./tool-names.ts";
 
 export {
+  MAX_DSML_MARKUP_TOKENS,
   MAX_TEXT_TOOL_MARKUP_CANDIDATES,
   MAX_UNPARSED_TOOL_CALL_MARKERS,
   MAX_UNPARSED_TOOL_CALL_SCAN_CHARACTERS,
 } from "./text-markup-bounds.ts";
 export { toolArgumentWithinBudget } from "./text-markup-arguments.ts";
-export {
-  dsmlBlockEnd,
-  dsmlPossibleStart,
-  dsmlRecoverableStart,
-} from "./dsml-tool-calls.ts";
 
 export function canonicalToolCallSignature(
   call: WorkbenchToolCall,
@@ -64,15 +61,6 @@ const UNPARSED_TOOL_CALL_OPENING = "<tool_call>";
 const UNPARSED_TOOL_CALL_CLOSING = "</tool_call>";
 const TEXT_TOOL_WRAPPER_OPENING = "<tool_call>";
 const TEXT_TOOL_WRAPPER_CLOSING = "</tool_call>";
-
-/**
- * Most DSML separator-wrapped tokens one reply may hold and still be read as
- * markup. A recoverable element takes at least two tokens (an opening and a
- * closing tag), and a wrapper, an invoke and its parameters hold more, so eight
- * tokens per candidate element bounds the whole DSML scan under the same
- * per-element candidate limit the Qwen dialect uses. Past it the text is prose.
- */
-export const MAX_DSML_MARKUP_TOKENS = MAX_TEXT_TOOL_MARKUP_CANDIDATES * 8;
 
 /** One recovered unit of markup: a span to remove and the calls it carried. */
 interface RecoveredTextBlock {
@@ -439,17 +427,38 @@ export function extractTextToolCalls(
   return { toolCalls, cleaned };
 }
 
-function textToolMarkupStart(
+/** The earliest Qwen markup the reader may withhold from, or -1. */
+export function qwenPossibleTextToolMarkupStart(
+  text: string,
+  tools: WorkbenchToolDefinition[] | undefined,
+): number {
+  return qwenTextToolMarkupStart(text, tools);
+}
+
+/** The earliest DSML markup the reader may withhold from, or -1. */
+export function dsmlPossibleMarkupStart(
   text: string,
   tools: WorkbenchToolDefinition[] | undefined,
 ): number {
   if (!tools || tools.length === 0) return -1;
-  const qwen = qwenTextToolMarkupStart(text, tools);
-  const dsml = dsmlPossibleStart(
-    text,
-    new Set(toolWireNames(tools).map(({ wire }) => wire)),
-  );
-  return earliestMarker(qwen, dsml);
+  return dsmlPossibleStart(text, offeredWireNames(tools));
+}
+
+/** The earliest DSML markup a reader can stop withholding for, or -1. */
+export function dsmlRecoverableMarkupStart(
+  text: string,
+  tools: WorkbenchToolDefinition[] | undefined,
+): number {
+  if (!tools || tools.length === 0) return -1;
+  return dsmlRecoverableStart(text, offeredWireNames(tools));
+}
+
+/** The earliest Qwen markup recovery can run, or -1. */
+export function qwenConfirmedMarkupStart(
+  text: string,
+  tools: WorkbenchToolDefinition[] | undefined,
+): number {
+  return confirmedQwenTextToolMarkupStart(text, tools);
 }
 
 function qwenTextToolMarkupStart(
@@ -542,7 +551,11 @@ export function possibleTextToolMarkupStart(
   text: string,
   tools: WorkbenchToolDefinition[] | undefined,
 ): number {
-  return textToolMarkupStart(text, tools);
+  if (!tools || tools.length === 0) return -1;
+  return earliestMarker(
+    qwenPossibleTextToolMarkupStart(text, tools),
+    dsmlPossibleStart(text, offeredWireNames(tools)),
+  );
 }
 
 function offeredWireNames(

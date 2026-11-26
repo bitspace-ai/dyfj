@@ -15,7 +15,10 @@ import {
   DSML_GATE_WAIT_BLOCK,
   DSML_PROSE,
   dsmlBlock,
+  dsmlCharacterChunks,
+  dsmlChunksAt,
   dsmlPartialBlock,
+  dsmlTag,
   DSML_PIPE,
 } from "../../../testing/providers/dsml-fixtures.ts";
 
@@ -775,5 +778,201 @@ describe("DeepSeek DSML markup in streamed text", () => {
     assert.strictEqual(deltas.join(""), prefix);
     assert.strictEqual(result.text, prefix);
     assert.strictEqual(result.toolCalls, undefined);
+  });
+});
+
+// A real tokenizer splits the markup wherever a token ends, so an opener or a
+// wrapper name can straddle a delta boundary. The reviewer's probes (Pass 1,
+// 2026-11-26) showed the raw markup reaching `onTextDelta` in that case, so
+// each test here cuts the captured block at a boundary that matters (BIT-991).
+describe("DeepSeek DSML markup split across deltas", () => {
+  const streamOf = async (
+    chunks: readonly string[],
+    toolNames: string[],
+    options: { tools?: boolean } = {},
+  ) => {
+    const deltas: string[] = [];
+    const transport = new ScriptedHttpTransport([{
+      respond: {
+        body: sse([
+          ...chunks.map((content) => ({ choices: [{ delta: { content } }] })),
+          { choices: [{ delta: {}, finish_reason: "stop" }] },
+        ]),
+      },
+    }]);
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "continue",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      ...(options.tools === false ? {} : { tools: toolNames.map(dsmlTool) }),
+      onTextDelta: (delta) => deltas.push(delta),
+      fetchFn: transport.fetch,
+    });
+    transport.assertDone();
+    return { result, deltas };
+  };
+
+  it("withholds a block whose every character arrives in its own delta", async () => {
+    const { result, deltas } = await streamOf(
+      dsmlCharacterChunks(DSML_BASH_BLOCK),
+      ["bash"],
+    );
+
+    assert.deepStrictEqual(result.toolCalls, [{
+      id: "text-tool-1",
+      name: "bash",
+      arguments: { command: DSML_BASH_COMMAND },
+    }]);
+    assert.strictEqual(deltas.join(""), "");
+    assert.strictEqual(result.text, "");
+    assert.strictEqual(result.unparsedToolCallMarkup, undefined);
+  });
+
+  it("withholds a block split inside the separator run and the wrapper name", async () => {
+    const opener = dsmlTag("spaced", "calls");
+    const cuts = [
+      opener.indexOf("DS") + 2,
+      opener.length + 2,
+      opener.length + 6,
+      40,
+      90,
+    ];
+    const { result, deltas } = await streamOf(
+      ["Checking. ", ...dsmlChunksAt(DSML_BASH_BLOCK, cuts)],
+      ["bash"],
+    );
+
+    assert.deepStrictEqual(result.toolCalls, [{
+      id: "text-tool-1",
+      name: "bash",
+      arguments: { command: DSML_BASH_COMMAND },
+    }]);
+    assert.strictEqual(deltas.join(""), "Checking. ");
+    assert.strictEqual(result.text, "Checking. ");
+    assert.strictEqual(result.unparsedToolCallMarkup, undefined);
+  });
+
+  it("delivers trailing prose live rather than holding it to the finish", async () => {
+    const before = "Checking. ";
+    const after = [" Do", "ne", "."];
+    const { result, deltas } = await streamOf(
+      [before, DSML_BASH_BLOCK, ...after],
+      ["bash"],
+    );
+
+    assert.strictEqual(deltas.join(""), `${before}${after.join("")}`);
+    assert.strictEqual(result.text, `${before}${after.join("")}`);
+    assert.deepStrictEqual(deltas.slice(1), after);
+  });
+
+  it("keeps a DSML block followed later by a Qwen close tag from diverging", async () => {
+    const qwen = "\n<tool_call><function=list_files>" +
+      "<parameter=path>.</parameter></function></tool_call>";
+    const { result, deltas } = await streamOf(
+      ["Checking. ", DSML_BASH_BLOCK, " mid ", qwen, " end"],
+      ["bash", "list_files"],
+    );
+
+    assert.deepStrictEqual(result.toolCalls, [{
+      id: "text-tool-1",
+      name: "bash",
+      arguments: { command: DSML_BASH_COMMAND },
+    }, {
+      id: "text-tool-2",
+      name: "list_files",
+      arguments: { path: "." },
+    }]);
+    const prose = "Checking.  mid \n end";
+    assert.strictEqual(result.text, prose);
+    assert.strictEqual(deltas.join(""), prose);
+  });
+
+  it("bounds how long a stray wrapper opener holds text back", async () => {
+    const opener = dsmlTag("spaced", "calls");
+    const prose = `The wrapper is ${opener}name and args. `;
+    const filler = "x".repeat(4_096);
+    const { result, deltas } = await streamOf(
+      [prose, filler, filler, filler],
+      ["bash"],
+    );
+
+    assert.strictEqual(result.text, prose + filler.repeat(3));
+    assert.strictEqual(deltas.join(""), result.text);
+    assert.strictEqual(result.toolCalls, undefined);
+    assert.strictEqual(result.unparsedToolCallMarkup, undefined);
+    // The opener is released with the rest once nothing DSML follows it, so the
+    // filler arrives live instead of being held to the finish.
+    assert.ok(deltas.length > 1, `${deltas.length} deltas`);
+  });
+
+  it("releases a stray wrapper opener's following prose live, in every delta", async () => {
+    const opener = dsmlTag("spaced", "calls");
+    const prose = `The wrapper is ${opener}name and args. `;
+    const words = Array.from({ length: 400 }, () => "more prose here. ");
+    const { result, deltas } = await streamOf(
+      [prose, ...words],
+      ["bash"],
+    );
+
+    assert.strictEqual(result.text, prose + words.join(""));
+    assert.strictEqual(deltas.join(""), result.text);
+    // The opener holds back at most its undecided prefix, and the prose after
+    // it is forwarded as each delta arrives rather than buffered to the finish,
+    // so nearly every word is its own delta.
+    assert.ok(
+      deltas.length >= words.length - 10,
+      `${deltas.length} deltas for ${words.length} words`,
+    );
+    assert.deepStrictEqual(deltas.slice(-20), words.slice(-20));
+  });
+
+  it("scales linearly when prose follows a stray wrapper opener", async () => {
+    const opener = dsmlTag("spaced", "calls");
+    const prose = `The wrapper is ${opener}name and args. `;
+    const measure = async (wordCount: number) => {
+      const words = Array.from(
+        { length: wordCount },
+        () => "more prose here. ",
+      );
+      const started = performance.now();
+      const { result } = await streamOf([prose, ...words], ["bash"]);
+      const elapsed = performance.now() - started;
+      assert.strictEqual(result.text, prose + words.join(""));
+      return elapsed;
+    };
+
+    await measure(200);
+    const small = await measure(1_000);
+    const large = await measure(4_000);
+    // Four times the input must not cost more than an order of magnitude more
+    // time; a per-delta rescan of the withheld prefix would blow past this.
+    assert.ok(
+      large < Math.max(small, 1) * 40,
+      `small ${small.toFixed(1)}ms large ${large.toFixed(1)}ms`,
+    );
+  });
+
+  it("withholds the fully split gate_wait block and refuses it when unoffered", async () => {
+    const split = await streamOf(dsmlCharacterChunks(DSML_GATE_WAIT_BLOCK), [
+      "gate/wait",
+    ]);
+    assert.deepStrictEqual(split.result.toolCalls, [{
+      id: "text-tool-1",
+      name: "gate/wait",
+      arguments: { run: DSML_GATE_RUN, wait_seconds: 60 },
+    }]);
+    assert.strictEqual(split.deltas.join(""), "");
+
+    const unoffered = await streamOf(dsmlCharacterChunks(DSML_GATE_WAIT_BLOCK), [
+      "bash",
+    ]);
+    assert.strictEqual(unoffered.result.toolCalls, undefined);
+    assert.strictEqual(unoffered.result.text, DSML_GATE_WAIT_BLOCK);
+    assert.strictEqual(unoffered.deltas.join(""), DSML_GATE_WAIT_BLOCK);
+    assert.deepStrictEqual(unoffered.result.unparsedToolCallMarkup, {
+      count: 1,
+      countIsLowerBound: false,
+    });
   });
 });

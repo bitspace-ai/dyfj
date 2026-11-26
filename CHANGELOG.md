@@ -24,19 +24,30 @@ README are tracked separately in its Revision history section.
   turn runs the call and strips the markup from the text. An invoke name
   resolves through the same wire-name mapping as a structured call
   (`gate_wait` reaches `gate/wait`), a `parameter` marked `string="true"` is
-  literal text (multiline command lines included), and one marked
-  `string="false"` is JSON and must parse, so numbers, booleans, objects and
-  arrays arrive typed. `providers/shared/text-tool-calls.ts` composes the two
+  literal text kept exactly as written (multiline command lines included, with
+  its own leading and trailing newlines), and one marked `string="false"` is
+  JSON and must parse, so numbers, booleans, objects and arrays arrive typed.
+  `providers/shared/text-tool-calls.ts` composes the two
   dialects: recovery returns whichever markup came first in the text, and the
   unparsed-markup count now also reports a DSML block left unrun — a whole
   block left in the text, or one the reply cuts off once it has revealed DSML
   structure past its opening — rather than treating it as an answer. The
   streaming presenter withholds a DSML block as it arrives, so the raw markup
   never flashes to the terminal, and an aborted turn strips a DSML block it had
-  withheld. Every scan stays linear and bounded: the separator-wrapped marker
-  count is capped at the same per-element candidate limit as the Qwen dialect
-  scaled to that dialect's tokens per element, and the whole-text scan keeps
-  the accepted-response bound. The bounds, the argument-budget helper and its
+  withheld. A markup opener a tokenizer splits across deltas is withheld too,
+  including a fragment as short as `<` and the separator run, and the prose
+  after a recovered block is forwarded as it arrives instead of waiting for the
+  stream to end. A block is only withheld while it may still turn out
+  recoverable: once a candidate block has grown past the bound a wrapper and its
+  invoke tag fit in, it is prose and the reader releases it, so markup-shaped
+  text in ordinary prose costs no more than that bound. Every scan stays linear
+  and bounded: the separator-wrapped marker count is capped at the same
+  per-element candidate limit as the Qwen dialect
+  scaled to that dialect's tokens per element, the block's end is read once per
+  block rather than once per delta, the presenter scans only the text it has not
+  decided yet rather than the whole reply at each delta, and the whole-text scan
+  keeps the accepted-response bound. The bounds, the argument-budget helper and
+  its
   coercion moved into `providers/shared/text-markup-bounds.ts` and
   `providers/shared/text-markup-arguments.ts` so no module in the recovery path
   grows past the module-size limit. The Qwen `<tool_call>` recovery and

@@ -18,19 +18,24 @@ import {
   MAX_OPENAI_RESPONSE_READS,
 } from "../shared/response-bounds.ts";
 import {
-  confirmedTextToolMarkupStart,
   countNewTextToolMarkupCandidates,
-  dsmlPossibleStart,
-  dsmlRecoverableStart,
+  dsmlPossibleMarkupStart,
+  dsmlRecoverableMarkupStart,
   extractTextToolCallsInternal,
   MAX_DSML_MARKUP_TOKENS,
   MAX_TEXT_TOOL_MARKUP_CANDIDATES,
-  possibleTextToolMarkupStart,
+  qwenConfirmedMarkupStart,
+  qwenPossibleTextToolMarkupStart,
   stripIncompleteTextToolCallSuffix,
   TEXT_FUNCTION_MARKER,
   TEXT_PARAMETER_MARKER,
 } from "../shared/text-tool-calls.ts";
-import { DSML_MARKER_COUNT, dsmlBlockEnd } from "../shared/dsml-tool-calls.ts";
+import {
+  DSML_MARKER_COUNT,
+  dsmlBlockEnd,
+  dsmlPartialOpeningStart,
+  dsmlWrapperClosingEnd,
+} from "../shared/dsml-tool-calls.ts";
 import { finiteNonnegativeTokenCount } from "../shared/tokens.ts";
 import { toolWireNames } from "../shared/tool-names.ts";
 import {
@@ -290,17 +295,21 @@ export async function readOpenAIChatStream(
 
 /**
  * Live presentation of streamed text. Text is forwarded to `onTextDelta` as it
- * arrives, except that a recognized offered-tool wrapper is withheld until it
- * closes: recoverable markup stays hidden, and trailing prose resumes
- * immediately after the close. The presenter owns all of that state; the
- * reader only appends deltas and finishes once.
+ * arrives, except for a recognized offered-tool block of either markup dialect,
+ * which is withheld until it closes: recoverable markup stays hidden, and
+ * trailing prose resumes as soon as the block ends. A block still arriving is
+ * only ever withheld while it may still turn out recoverable, so ordinary prose
+ * that happens to hold a markup marker is held back for at most
+ * `MAX_DSML_UNDECIDED_PREFIX` characters. The presenter owns all of that state;
+ * the reader only appends deltas and finishes once.
  */
 function createTextPresenter(
   tools: WorkbenchToolDefinition[] | undefined,
   onTextDelta: (delta: string) => void,
 ) {
   let text = "";
-  let suppressing = false;
+  /** Which dialect is being withheld, or undefined when nothing is. */
+  let suppressing: "qwen" | "dsml" | undefined;
   let sawTextToolMarkup = false;
   let textToolRecoveryDisabled = !tools || tools.length === 0;
   let functionCandidates = 0;
@@ -309,10 +318,14 @@ function createTextPresenter(
   let functionCandidateTail = "";
   let parameterCandidateTail = "";
   let dsmlCandidateTail = "";
-  let forwardedLength = 0;
+  /**
+   * The text not yet decided: what the reader still has to look at, drained as
+   * it is emitted or withheld. Every scan reads this short tail, never the
+   * accumulated text, so a long reply costs time linear in its characters
+   * instead of re-reading the whole of it at each delta.
+   */
+  let pending = "";
   let forwardedText = "";
-  let closingSearchFrom = 0;
-  let suppressingDsml = false;
 
   const offeredNames = tools
     ? new Set(toolWireNames(tools).map(({ wire }) => wire))
@@ -322,83 +335,74 @@ function createTextPresenter(
     forwardedText += delta;
     onTextDelta(delta);
   };
+  /** Emit the decided prefix of `pending` and drop it. */
+  const release = (characters: number) => {
+    if (characters <= 0) return;
+    emitTextDelta(pending.slice(0, characters));
+    pending = pending.slice(characters);
+  };
+  /** Emit the withheld span, or hide it once recovery confirms it runs. */
+  const settleWithheld = (end: number) => {
+    const candidate = pending.slice(0, end);
+    const extraction = extractTextToolCallsInternal(
+      candidate,
+      offeredNames,
+      true,
+    );
+    if (extraction.unrecoverable || extraction.toolCalls.length === 0) {
+      emitTextDelta(candidate);
+    } else {
+      sawTextToolMarkup = true;
+    }
+    pending = pending.slice(end);
+    suppressing = undefined;
+  };
   const forwardAvailableText = () => {
-    while (forwardedLength < text.length) {
+    while (true) {
       if (textToolRecoveryDisabled) {
-        emitTextDelta(text.slice(forwardedLength));
-        forwardedLength = text.length;
+        release(pending.length);
         return;
       }
-      if (suppressing) {
-        if (suppressingDsml) {
-          const end = dsmlBlockEnd(text, forwardedLength);
-          if (end < 0) return;
-          const candidate = text.slice(forwardedLength, end);
-          const extraction = extractTextToolCallsInternal(
-            candidate,
-            offeredNames,
-            true,
-          );
-          if (extraction.unrecoverable || extraction.toolCalls.length === 0) {
-            emitTextDelta(candidate);
-          } else {
-            sawTextToolMarkup = true;
-          }
-          forwardedLength = end;
-          suppressing = false;
-          suppressingDsml = false;
-          continue;
-        }
-        const closing = text.indexOf("</tool_call>", closingSearchFrom);
-        if (closing < 0) {
-          closingSearchFrom = Math.max(
-            forwardedLength,
-            text.length - "</tool_call>".length + 1,
-          );
+      if (suppressing === "dsml") {
+        // A closing wrapper tag is the cheap proof the block ended; the parse
+        // then runs once, on the whole block, rather than on every delta.
+        if (dsmlWrapperClosingEnd(pending, 0) < 0) return;
+        const end = dsmlBlockEnd(pending, 0);
+        if (end < 0) {
+          // The wrapper closed around something that is not a DSML block, so
+          // the markup is prose after all: release it and read on.
+          release(pending.length);
+          suppressing = undefined;
           return;
         }
-        const end = closing + "</tool_call>".length;
-        const candidate = text.slice(forwardedLength, end);
-        const extraction = extractTextToolCallsInternal(
-          candidate,
-          offeredNames,
-          true,
-        );
-        if (extraction.unrecoverable || extraction.toolCalls.length === 0) {
-          emitTextDelta(candidate);
-        } else {
-          sawTextToolMarkup = true;
-        }
-        forwardedLength = end;
-        suppressing = false;
-        closingSearchFrom = end;
+        settleWithheld(end);
         continue;
       }
-      const pending = text.slice(forwardedLength);
-      const qwenStart = confirmedTextToolMarkupStart(pending, tools);
-      const dsmlStart = dsmlRecoverableStart(pending, offeredNames);
-      const markupStart = qwenStart >= 0 ? qwenStart : dsmlStart;
+      if (suppressing === "qwen") {
+        const closing = pending.indexOf("</tool_call>");
+        if (closing < 0) return;
+        settleWithheld(closing + "</tool_call>".length);
+        continue;
+      }
+      const dsmlStart = dsmlRecoverableMarkupStart(pending, tools);
+      const qwenStart = qwenConfirmedMarkupStart(pending, tools);
+      const markupStart = dsmlStart >= 0 && (qwenStart < 0 || dsmlStart <= qwenStart)
+        ? dsmlStart
+        : qwenStart;
       if (markupStart >= 0) {
-        if (markupStart > 0) {
-          emitTextDelta(pending.slice(0, markupStart));
-          forwardedLength += markupStart;
-        }
-        suppressing = true;
-        suppressingDsml = qwenStart < 0;
-        closingSearchFrom = forwardedLength;
+        release(markupStart);
+        suppressing = markupStart === dsmlStart ? "dsml" : "qwen";
         continue;
       }
       const safeStarts = [
-        possibleTextToolMarkupStart(pending, tools),
-        dsmlPossibleStart(pending, offeredNames),
+        qwenPossibleTextToolMarkupStart(pending, tools),
+        dsmlPossibleMarkupStart(pending, tools),
+        dsmlPartialOpeningStart(pending),
       ].filter((start) => start >= 0);
       const safeEnd = safeStarts.length === 0
-        ? text.length
-        : forwardedLength + Math.min(...safeStarts);
-      if (safeEnd > forwardedLength) {
-        emitTextDelta(text.slice(forwardedLength, safeEnd));
-        forwardedLength = safeEnd;
-      }
+        ? pending.length
+        : Math.min(...safeStarts);
+      if (safeEnd > 0) release(safeEnd);
       return;
     }
   };
@@ -436,6 +440,7 @@ function createTextPresenter(
         dsmlCandidates += dsmlUpdate.count;
       }
       text += delta;
+      pending += delta;
       if (
         !textToolRecoveryDisabled &&
         (
@@ -450,8 +455,7 @@ function createTextPresenter(
           );
         }
         textToolRecoveryDisabled = true;
-        suppressing = false;
-        suppressingDsml = false;
+        suppressing = undefined;
       }
       forwardAvailableText();
     },
@@ -464,6 +468,7 @@ function createTextPresenter(
         throw new DomainError("Provider stream presentation diverged");
       }
       emitTextDelta(deliverable.slice(forwardedText.length));
+      pending = "";
       return deliverable;
     },
   };

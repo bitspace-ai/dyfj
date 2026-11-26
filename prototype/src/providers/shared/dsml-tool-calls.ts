@@ -35,7 +35,7 @@ import {
 } from "./text-markup-bounds.ts";
 
 /** Fullwidth vertical bar (U+FF5C), the separator in the captured replies. */
-export const DSML_FULLWIDTH_PIPE = "\uFF5C";
+const DSML_FULLWIDTH_PIPE = "\uFF5C";
 
 /** The separator spellings an upstream may emit. */
 const DSML_SEPARATORS = [DSML_FULLWIDTH_PIPE, "|"] as const;
@@ -63,6 +63,16 @@ const MAX_DSML_NAME_LENGTH = 64;
 const MAX_DSML_ATTRIBUTE_LENGTH = 512;
 const MAX_DSML_ATTRIBUTES = 8;
 const MAX_DSML_ELEMENTS = MAX_TEXT_TOOL_MARKUP_CANDIDATES + 1;
+
+/** Longest separator on the wire, in UTF-16 code units. */
+const MAX_DSML_SEPARATOR_LENGTH = Math.max(
+  ...DSML_SEPARATORS.map((separator) => separator.length),
+);
+
+/** Longest wrapper element name (`function_calls`). */
+const MAX_DSML_WRAPPER_NAME_LENGTH = Math.max(
+  ...DSML_WRAPPER_NAMES.map((name) => name.length),
+);
 
 function isDsmlSpace(character: string): boolean {
   return character === " " || character === "\t" || character === "\n" ||
@@ -130,6 +140,63 @@ export function dsmlClosingTagIndex(text: string, from: number): number {
     if (at >= 0 && (earliest < 0 || at < earliest)) earliest = at;
   }
   return earliest;
+}
+
+/**
+ * Index just past the first closing wrapper tag (`calls` or `function_calls`)
+ * at or after `from`, or -1 while the text holds none. A reader that finds one
+ * knows the block it is withholding has ended, so it parses the block once
+ * instead of on every delta; the search itself is a cheap substring probe.
+ */
+export function dsmlWrapperClosingEnd(text: string, from: number): number {
+  let at = dsmlClosingTagIndex(text, from);
+  for (let seen = 0; at >= 0 && seen < MAX_TEXT_TOOL_MARKUP_CANDIDATES; seen++) {
+    const parsed = parseDsmlTag(text, at);
+    if (parsed.ok && parsed.tag.closing && isWrapperName(parsed.tag.name)) {
+      return parsed.end;
+    }
+    if (parsed.ok) {
+      at = dsmlClosingTagIndex(text, parsed.end);
+      continue;
+    }
+    at = dsmlClosingTagIndex(text, at + 1);
+  }
+  return -1;
+}
+
+/**
+ * How long a candidate block may stay undecided, in characters. A wrapper tag
+ * and the invoke tag that follows it each fit well inside this: the longest
+ * opening is `<`, a separator, `DSML`, the separator, a space, `function_calls`
+ * and `>`, and the longest invoke opening adds a name attribute. A candidate
+ * still undecided past it is prose, not markup on its way, so a reader stops
+ * withholding there instead of holding the rest of the reply back.
+ */
+export const MAX_DSML_UNDECIDED_PREFIX = 64 + MAX_DSML_NAME_LENGTH +
+  MAX_TEXT_TOOL_WRAPPER_WHITESPACE;
+
+/**
+ * The index where a DSML tag opening begins in a text that ends inside it, or
+ * -1. A tokenizer can split the opening anywhere - `<`, `<` + separator,
+ * `<` + separator + `DS` - so a reader needs this to withhold the fragment
+ * instead of flashing it. Only the tail long enough to hold an opening is
+ * examined, so the scan is constant-time.
+ */
+export function dsmlPartialOpeningStart(text: string): number {
+  const longest = 2 + (2 * MAX_DSML_SEPARATOR_LENGTH) + 4;
+  const from = Math.max(0, text.length - longest + 1);
+  for (let at = from; at < text.length; at++) {
+    if (text[at] !== "<") continue;
+    const tail = text.slice(at);
+    for (const separator of DSML_SEPARATORS) {
+      for (const lead of DSML_TAG_OPENINGS) {
+        const token = `${lead}${separator}DSML${separator}`;
+        if (token === tail) continue;
+        if (token.startsWith(tail)) return at;
+      }
+    }
+  }
+  return -1;
 }
 
 /**
@@ -344,8 +411,15 @@ function scanInvoke(text: string, from: number): DsmlInvokeScan {
     if (!closingTag.tag.closing || closingTag.tag.name !== "parameter") {
       return failedInvokeScan({ invalid: true });
     }
-    const raw = text.slice(elementTag.end, closingAt).trim();
-    const value = typedToolArgument(raw, tag.attributes.string);
+    const raw = text.slice(elementTag.end, closingAt);
+    // A `string="true"` value is the model's literal text, so its own leading
+    // and trailing newlines are kept; a typed (`string="false"`) or
+    // unmarked value is JSON or a bare token, where surrounding whitespace is
+    // the element's layout rather than the value.
+    const value = typedToolArgument(
+      tag.attributes.string === "true" ? raw : raw.trim(),
+      tag.attributes.string,
+    );
     if (!value.ok) argumentsRecoverable = false;
     else args[key] = value.value;
     i = closingTag.end;
@@ -590,7 +664,9 @@ export function dsmlRecoverableStart(
  * The index of the earliest block that may still become recoverable: the text
  * has not yet revealed an invoke name, or has revealed one only in part, and
  * what it shows is consistent with an offered tool. A reader withholds from
- * here while it waits for the rest.
+ * here while it waits for the rest, but only while the candidate is shorter
+ * than `MAX_DSML_UNDECIDED_PREFIX`: a stray wrapper opening in prose stops
+ * holding text back once nothing follows it.
  */
 export function dsmlPossibleStart(
   text: string,
@@ -599,12 +675,20 @@ export function dsmlPossibleStart(
   return dsmlStartCandidate(text, offeredNames, false);
 }
 
+/**
+ * The index of the earliest block a reader withholds from, or -1.
+ * `requireOfferedName` separates the two readings: a confirmed start belongs to
+ * a block whose first invoke already names an offered tool, and an undecided one
+ * only while the text still fits `MAX_DSML_UNDECIDED_PREFIX`.
+ */
 function dsmlStartCandidate(
   text: string,
   offeredNames: ReadonlySet<string> | undefined,
   requireOfferedName: boolean,
 ): number {
   if (offeredNames === undefined || offeredNames.size === 0) return -1;
+  /** Whether this reading withholds for a block it has not confirmed yet. */
+  const undecided = !requireOfferedName;
   let at = nextDsmlTagStart(text, 0);
   let candidates = 0;
   while (at >= 0 && candidates < MAX_TEXT_TOOL_MARKUP_CANDIDATES) {
@@ -612,14 +696,12 @@ function dsmlStartCandidate(
     const wrapper = parseDsmlTag(text, at);
     if (!wrapper.ok) {
       if (
-        requireOfferedName || wrapper.truncated ||
-        wrapper.partial === undefined || wrapper.partial.closing ||
-        !couldBecomeWrapper(wrapper.partial)
-      ) {
-        at = nextDsmlTagStart(text, at + 1);
-        continue;
-      }
-      return at;
+        undecided && wrapper.truncated && wrapper.partial !== undefined &&
+        !wrapper.partial.closing && couldBecomeWrapper(wrapper.partial) &&
+        text.length - at <= MAX_DSML_UNDECIDED_PREFIX
+      ) return at;
+      at = nextDsmlTagStart(text, at + 1);
+      continue;
     }
     if (wrapper.tag.closing || !isWrapperName(wrapper.tag.name)) {
       at = nextDsmlTagStart(text, at + 1);
@@ -627,11 +709,11 @@ function dsmlStartCandidate(
     }
     const invokeAt = nextDsmlTagStart(text, wrapper.end);
     if (invokeAt < 0) {
-      if (requireOfferedName) {
-        at = nextDsmlTagStart(text, at + 1);
-        continue;
+      if (undecided && text.length - at <= MAX_DSML_UNDECIDED_PREFIX) {
+        return at;
       }
-      return at;
+      at = nextDsmlTagStart(text, at + 1);
+      continue;
     }
     const invoke = parseDsmlTag(text, invokeAt);
     if (!invoke.ok) {
@@ -641,11 +723,11 @@ function dsmlStartCandidate(
       }
       const pending = pendingInvokeName(invoke.partial);
       if (pending === undefined) {
-        if (requireOfferedName) {
-          at = nextDsmlTagStart(text, at + 1);
-          continue;
+        if (undecided && text.length - at <= MAX_DSML_UNDECIDED_PREFIX) {
+          return at;
         }
-        return at;
+        at = nextDsmlTagStart(text, at + 1);
+        continue;
       }
       const matches = [...offeredNames].some((offered) =>
         offered.startsWith(pending)
@@ -660,11 +742,11 @@ function dsmlStartCandidate(
     }
     const name = invoke.tag.attributes.name;
     if (name === undefined || name.length === 0) {
-      if (requireOfferedName) {
-        at = nextDsmlTagStart(text, at + 1);
-        continue;
+      if (undecided && text.length - at <= MAX_DSML_UNDECIDED_PREFIX) {
+        return at;
       }
-      return at;
+      at = nextDsmlTagStart(text, at + 1);
+      continue;
     }
     if (!offeredNames.has(name)) {
       at = nextDsmlTagStart(text, at + 1);

@@ -120,3 +120,24 @@ export const DSML_GATE_WAIT_BLOCK = dsmlBlock("spaced", "gate_wait", [
 
 /** Prose to place before a block in a mixed reply. */
 export const DSML_PROSE = "Let me check that.";
+
+/**
+ * The captured block cut into one-character chunks, so every DSML tag arrives
+ * split across deltas: `forever`-sized pieces would hide the token-split
+ * opener a real tokenizer produces.
+ */
+export function dsmlCharacterChunks(block: string): string[] {
+  return [...block];
+}
+
+/** The captured block cut at each index in `cuts`, in order. */
+export function dsmlChunksAt(block: string, cuts: readonly number[]): string[] {
+  const chunks: string[] = [];
+  let from = 0;
+  for (const cut of cuts) {
+    chunks.push(block.slice(from, cut));
+    from = cut;
+  }
+  chunks.push(block.slice(from));
+  return chunks;
+}
