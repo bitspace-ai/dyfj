@@ -48,6 +48,7 @@ import {
   type TurnState,
 } from "./turn-state.ts";
 import type { AgentLoopOutcome } from "./agent-loop.ts";
+import type { StepStopReason } from "./step-budget.ts";
 import type { LoopTurnResult } from "./observed-turn.ts";
 
 // Event-write integrity policy, decoupled from mode. INTEGRITY events are the
@@ -516,6 +517,25 @@ function paidInferenceUsed(state: TurnState): boolean {
     (summary.byTier["2"]?.calls ?? 0)) > 0;
 }
 
+/**
+ * The receipt's step-policy fields, present only when they carry information
+ * the effective limit does not: a soft limit the turn extended past, and why
+ * the budget stopped tool use. A turn that ended itself below its soft limit
+ * reports neither, so its receipt and result are the shape they always were.
+ */
+function stepPolicyField(
+  budget: TurnState["stepBudget"],
+): { softToolSteps?: number; stepStopReason?: StepStopReason } {
+  return {
+    ...(budget.effectiveLimit > budget.softLimit
+      ? { softToolSteps: budget.softLimit }
+      : {}),
+    ...(budget.stopReason === undefined
+      ? {}
+      : { stepStopReason: budget.stopReason }),
+  };
+}
+
 function turnReceipt(state: TurnState, ports: NativeTurnPorts): string {
   const { session } = state;
   const summary = session.budget.getSummary();
@@ -549,11 +569,17 @@ function turnReceipt(state: TurnState, ports: NativeTurnPorts): string {
     validation: state.validation,
     agent: {
       toolStepsUsed: state.toolSteps,
-      maxToolSteps: session.maxToolSteps,
+      maxToolSteps: state.stepBudget.effectiveLimit,
       limitReached: state.toolStepLimitReached,
       ...(state.stepLimitHandoff === undefined
         ? {}
         : { handoff: state.stepLimitHandoff.source }),
+      // The policy fields appear only where they say something the effective
+      // limit does not: a soft limit the turn extended past, or a stop the
+      // budget made rather than the model. A turn that ended itself reads as
+      // it always did.
+      ...(stepPolicyField(state.stepBudget)),
+
       autoApprovals: { ...state.autoApprovals },
     },
     skippedEventWrites: state.audit.skippedEventWrites,
@@ -610,11 +636,17 @@ function turnResult(
       : { historyOmission: state.historyOmission }),
     agent: {
       toolStepsUsed: state.toolSteps,
-      maxToolSteps: session.maxToolSteps,
+      maxToolSteps: state.stepBudget.effectiveLimit,
       limitReached: state.toolStepLimitReached,
       ...(state.stepLimitHandoff === undefined
         ? {}
         : { handoff: state.stepLimitHandoff.source }),
+      // The policy fields appear only where they say something the effective
+      // limit does not: a soft limit the turn extended past, or a stop the
+      // budget made rather than the model. A turn that ended itself reads as
+      // it always did.
+      ...(stepPolicyField(state.stepBudget)),
+
       autoApprovals: { ...state.autoApprovals },
     },
     validation: state.validation,

@@ -34,16 +34,24 @@ level = "strict"
 [agent]
 # The UDS engine loads this file setting; every entrypoint accepts the
 # DYFJ_MAX_TOOL_STEPS environment override.
-# Maximum model-to-tool steps in one turn. Default 32; valid range 1 through 64.
-# Reaching the limit asks the model, in one call with no tools offered, for a
-# handoff: what is done, what is next, and any uncommitted state. If that call
-# fails, the turn ends with a notice of its last steps instead.
+# Maximum model-to-tool steps in one turn: a soft limit. Default 32; valid
+# range 1 through 64. A step that makes forward progress lets the turn extend
+# it by half this number, up to max_tool_steps_ceiling; two consecutive steps
+# without progress stop the turn here instead. Reaching the limit asks the
+# model, in one call with no tools offered, for a handoff: what is done, what
+# is next, and any uncommitted state. If that call fails, the turn ends with a
+# notice of its last steps instead.
 # Env override: DYFJ_MAX_TOOL_STEPS.
 # max_tool_steps = 32
-# The highest limit a session may set for itself (`--tool-steps N`, `/steps N`).
+# The highest limit a session may set for itself (`--tool-steps N`, `/steps N`),
+# and the hard bound any extension stops at.
 # Default 64; valid range 1 through 64, and not below max_tool_steps.
 # Env override: DYFJ_MAX_TOOL_STEPS_CEILING.
 # max_tool_steps_ceiling = 64
+# Whether a turn making forward progress may step past max_tool_steps toward
+# max_tool_steps_ceiling. Default true; false restores the fixed limit.
+# Env override: DYFJ_STEP_EXTENSION.
+# step_extension = true
 
 [codex]
 # The reasoning effort a codex-chatgpt/* turn runs at when the turn names

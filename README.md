@@ -462,12 +462,30 @@ Workbench also carries built-in rows for the local models above and adds them
 when the catalog has no row for them. A catalog row set inactive stays out of
 routing and the model picker; the built-in row does not replace it.
 
-Agent-tool turns default to 32 steps. Every entrypoint accepts
+Agent-tool turns default to a soft limit of 32 steps. Every entrypoint accepts
 `DYFJ_MAX_TOOL_STEPS`; the UDS engine also loads
 `[agent].max_tool_steps` from `~/.dyfj/config.toml`. Values are integers from 1
-through 64, and the environment value takes precedence for the engine. The
-final receipt reports `Tool steps: used/limit` and marks when the configured
-limit ended tool use.
+through 64, and the environment value takes precedence for the engine.
+
+That number is a soft limit, not a hard ceiling. After each tool step the turn
+weighs the step against its progress and its spend (`step-budget.ts`). A step
+that made forward progress — a call it had not already made this turn that did
+not fail, or a successful write or edit — lets the turn extend its limit by half
+the soft limit, never past the ceiling in `[agent].max_tool_steps_ceiling`
+(`DYFJ_MAX_TOOL_STEPS_CEILING`, default 64). A turn with two consecutive
+unproductive steps at the soft limit stops there instead of burning the rest of
+its budget, and a turn whose turn or runaway spend is already used stops before
+extending, because the next call would be refused anyway. Extension is on by
+default; `[agent] step_extension = false` (`DYFJ_STEP_EXTENSION`) restores the
+fixed limit exactly.
+
+The final receipt reports `Tool steps: used/limit` and marks when tool use ended.
+Past the soft limit it also names the policy — `(soft N, stopped: stall)` — so a
+turn that stopped early is distinguishable from one the model ended itself. The
+REPL posture line reads `32 tool steps (ceiling 64, extends on progress)`, and
+each decision is a durable `step_budget` event (soft limit, ceiling, effective
+limit, step, whether that step was productive, and the decision) so thresholds
+can be tuned from real turn telemetry later.
 
 At the limit, the runtime makes a call that offers no tools and asks the model
 for a handoff: what is done, what is next, and any uncommitted state. If that call
@@ -475,7 +493,8 @@ fails or a budget gate stops it, the turn ends on a runtime notice of its last
 tool calls instead. A session sets its own limit with `--tool-steps N` or
 `/steps N`, up to the ceiling in `[agent].max_tool_steps_ceiling`
 (`DYFJ_MAX_TOOL_STEPS_CEILING`, default 64); the runtime refuses a value above
-it.
+it. An explicit `--tool-steps N` or `/steps N` is that session's soft limit,
+and the ceiling still bounds any extension.
 
 The receipt line adds `cached N%` when a provider reports cache traffic: the
 share of the turn's input read from the prompt cache. The turn result's
@@ -4020,3 +4039,9 @@ Document revisions only. Code and behavior changes are tracked in
   instruction-trust check and takes its gate and dispatch tools from that
   section, and a profile whose `path` is the filesystem root covers the
   workspaces no deeper profile names.
+- 2026-11-25 - Replace the fixed tool-step ceiling with a progress-aware step
+  budget (`step-budget.ts`): the configured limit is now a soft limit a
+  productive turn extends toward the ceiling, a stalled turn stops early, and
+  spend outranks progress. Document `[agent] step_extension` /
+  `DYFJ_STEP_EXTENSION`, the `step_budget` event, and the receipt and posture
+  policy segments both clients print.

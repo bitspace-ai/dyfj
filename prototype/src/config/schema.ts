@@ -148,6 +148,14 @@ export const CONFIG_SCHEMA: readonly ConfigKeySpec[] = [
     kind: "value",
     default: 64,
   },
+  {
+    key: "stepExtension",
+    envVar: "DYFJ_STEP_EXTENSION",
+    domain: "engine",
+    type: "boolean",
+    kind: "value",
+    default: true,
+  },
   // ── engine: budget defaults (env layer today; file layer is the next slice) ──
   {
     key: "defaultSessionBudgetUsd",

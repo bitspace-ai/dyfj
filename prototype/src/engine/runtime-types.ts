@@ -28,6 +28,7 @@ import type {
   ConfirmBudgetCeiling,
   SpendBaselines,
 } from "../budget/mod.ts";
+import type { StepStopReason } from "./step-budget.ts";
 import type {
   CommandDefinition,
   ConfirmToolApproval,
@@ -258,6 +259,13 @@ export interface WorkbenchRuntimeInput extends WorkbenchRuntimeRequest {
    */
   maxToolStepsCeiling?: number;
   /**
+   * Whether a turn making forward progress may step past its soft step limit
+   * toward the ceiling (config: `[agent] step_extension` /
+   * `DYFJ_STEP_EXTENSION`, resolved at the boundary). Absent or false keeps
+   * the soft limit as the hard one, which is the behaviour before it existed.
+   */
+  stepExtension?: boolean;
+  /**
    * Default budget limits (the engine's startup posture), resolved once at the
    * boundary from the declared config surface (DYFJ_BUDGET_* via
    * resolveBudgetDefaultsFromEnv) so the core reads no env. The core uses these
@@ -301,9 +309,14 @@ export interface NativeWorkbenchRuntimeResult extends NativeTurnReceipt {
   };
   agent: {
     toolStepsUsed: number;
+    /** The step count the turn may reach, after any extension. */
     maxToolSteps: number;
     limitReached: boolean;
     handoff?: "model" | "notice";
+    /** The configured soft limit, before any extension. */
+    softToolSteps?: number;
+    /** Why tool use ended when the step budget stopped it. */
+    stepStopReason?: StepStopReason;
     autoApprovals: AutoApprovals;
   };
   validation?: WorkbenchValidationSummary;

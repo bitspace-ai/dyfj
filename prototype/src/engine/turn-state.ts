@@ -53,6 +53,7 @@ import type {
   WorkspaceConfigResolver,
 } from "../config/mod.ts";
 import type { WorkbenchTurnParams } from "../providers/mod.ts";
+import { StepBudget } from "./step-budget.ts";
 import type { BudgetScopes, SessionGrantScopes } from "./session-owner.ts";
 import type { ToolHistoryScopes } from "./tool-history.ts";
 import type { WorkbenchValidationSummary } from "./runtime-types.ts";
@@ -141,7 +142,12 @@ export interface TurnSession {
   /** Ask and next-work turns load repo context instead of the companion's. */
   usesRepoAskContext: boolean;
   workletId: string | undefined;
+  /** The configured soft step limit, before any extension. */
   maxToolSteps: number;
+  /** The hard safety bound, whatever the turn's progress. */
+  maxToolStepsCeiling: number;
+  /** Whether a productive turn may step past `maxToolSteps`. */
+  stepExtension: boolean;
   /** The root the file tools fall back to when no workspace resolves. */
   fallbackRoot: string;
   /** The transport-gated workspace request, persisted on a new session. */
@@ -254,6 +260,8 @@ export interface TurnState {
   callTimings: WorkbenchCallTimings | undefined;
   toolSteps: number;
   toolStepLimitReached: boolean;
+  /** The step budget's own state; the agent loop is its only writer. */
+  stepBudget: StepBudget;
   /**
    * How a turn that reached its tool-step limit left its handoff: "model"
    * when the handoff call answered, "notice" when it failed and the runtime
@@ -325,6 +333,11 @@ export function newTurnState(
     callTimings: undefined,
     toolSteps: 0,
     toolStepLimitReached: false,
+    stepBudget: new StepBudget({
+      softLimit: session.maxToolSteps,
+      ceiling: session.maxToolStepsCeiling,
+      extension: session.stepExtension,
+    }),
     stepLimitHandoff: undefined,
     recentToolCalls: [],
     autoApprovals: { allowlist: 0, sessionGrant: 0 },

@@ -349,9 +349,20 @@ fn posture_line_with_models(status: &Value, session: &Session, socket: &str, row
         .map(i64::from)
         .or_else(|| runtime.get("maxToolSteps").and_then(Value::as_i64));
     if let Some(steps) = steps {
-        match runtime.get("maxToolStepsCeiling").and_then(Value::as_i64) {
-            Some(ceiling) => parts.push(format!("{steps} tool steps (ceiling {ceiling})")),
-            None => parts.push(format!("{steps} tool steps")),
+        // The effective step policy: the soft limit, the ceiling, and whether
+        // a productive turn extends toward it. A runtime that reports neither
+        // extra field renders the line this client always printed.
+        let mut policy = Vec::new();
+        if let Some(ceiling) = runtime.get("maxToolStepsCeiling").and_then(Value::as_i64) {
+            policy.push(format!("ceiling {ceiling}"));
+        }
+        if runtime.get("stepExtension").and_then(Value::as_bool) == Some(true) {
+            policy.push("extends on progress".into());
+        }
+        if policy.is_empty() {
+            parts.push(format!("{steps} tool steps"));
+        } else {
+            parts.push(format!("{steps} tool steps ({})", policy.join(", ")));
         }
     }
     if let Some(roots) = crate::session::roots_segment(session.workspace.as_deref(), &session.additional_roots) {

@@ -40,6 +40,11 @@ export interface RuntimeStatusPayload {
     maxToolSteps?: number;
     /** The highest limit a session may set; absent on older servers. */
     maxToolStepsCeiling?: number;
+    /**
+     * Whether a turn making forward progress may step past its soft limit
+     * toward the ceiling; absent on older servers.
+     */
+    stepExtension?: boolean;
     /** The effort a Codex turn runs at when it names none; absent on older servers. */
     codexReasoningEffort?: string;
     models?: { total?: number; local?: number; hosted?: number };

@@ -1,0 +1,161 @@
+/**
+ * The progress-aware tool-step budget (BIT-992).
+ *
+ * A turn's tool steps were bounded by one fixed number, so a productive turn
+ * working through a repo was interrupted mid-stride while its dollar budgets
+ * were nowhere near spent. This module replaces that single bound with three
+ * numbers and a progress test:
+ *
+ *   - the **soft limit**: the step count the turn was configured for (the
+ *     standing `[agent] max_tool_steps`, or a session's own `/steps N`);
+ *   - the **ceiling**: the hard safety bound the turn may never pass;
+ *   - **extension**: whether a productive turn may raise its soft limit
+ *     toward the ceiling, in chunks.
+ *
+ * After each tool step the loop asks `decide`. A step inside the soft limit
+ * continues. Past it, a step that made forward progress extends the limit by
+ * a chunk (never past the ceiling), and a step that made none counts toward a
+ * stall streak: two unproductive steps in a row stop the turn early instead of
+ * burning the rest of the budget on a loop. Spend outranks progress: a turn
+ * whose dollar budgets are already spent stops before extending, because the
+ * next provider call would be refused anyway.
+ *
+ * The budget is state, and its single writer is the agent loop.
+ */
+
+/** Consecutive unproductive steps at the soft limit that end a turn. */
+export const STALL_STEPS = 2;
+
+/** Why a turn's tool use ended. */
+export type StepStopReason =
+  /** The soft limit, with extension off. */
+  | "limit"
+  /** The hard safety ceiling. */
+  | "ceiling"
+  /** Consecutive steps with no forward progress. */
+  | "stall"
+  /** The turn's spend limits leave no room for another call. */
+  | "budget";
+
+/** The three numbers a turn's step budget is fixed from. */
+export interface StepBudgetPolicy {
+  /** The configured step count, before any extension. */
+  softLimit: number;
+  /** The hard bound, however productive the turn is. */
+  ceiling: number;
+  /** Whether a productive turn may raise its soft limit toward the ceiling. */
+  extension: boolean;
+}
+
+/** What one completed tool step did, for the budget's decision. */
+export interface StepOutcome {
+  /** The step just completed, counting from 1. */
+  step: number;
+  /** The step made forward progress (see `noteToolProgress`). */
+  productive: boolean;
+  /** The turn's spend so far. */
+  turnSpentUsd: number;
+  /** The turn's spend since its last step that made progress. */
+  stallSpentUsd: number;
+  turnLimitUsd: number;
+  runawayStallUsd: number;
+}
+
+/** What the budget decided after a step. */
+export type StepDecision =
+  | { kind: "continue" }
+  | { kind: "extended"; from: number; to: number }
+  | { kind: "stop"; reason: StepStopReason; effectiveLimit: number };
+
+/**
+ * How many steps one extension grants: half the soft limit, at least one.
+ * Half the soft budget keeps a long turn's extension deliberate rather than
+ * open-ended, and never lets one productive step jump to the ceiling.
+ */
+export function extensionChunk(softLimit: number): number {
+  return Math.max(1, Math.floor(softLimit / 2));
+}
+
+/** The step budget of one turn; the agent loop is its only writer. */
+export class StepBudget {
+  readonly softLimit: number;
+  readonly ceiling: number;
+  readonly extension: boolean;
+  #effectiveLimit: number;
+  #stalledSteps = 0;
+  #stopReason: StepStopReason | undefined;
+
+  constructor(policy: StepBudgetPolicy) {
+    this.softLimit = Math.max(1, Math.trunc(policy.softLimit));
+    this.ceiling = Math.max(1, Math.trunc(policy.ceiling));
+    this.extension = policy.extension;
+    this.#effectiveLimit = Math.min(this.softLimit, this.ceiling);
+  }
+
+  /** The step count the turn may reach, after any extension so far. */
+  get effectiveLimit(): number {
+    return this.#effectiveLimit;
+  }
+
+  /** Consecutive unproductive steps at the soft limit. */
+  get stalledSteps(): number {
+    return this.#stalledSteps;
+  }
+
+  /** Why tool use ended, or undefined while the turn may still step. */
+  get stopReason(): StepStopReason | undefined {
+    return this.#stopReason;
+  }
+
+  /** Whether the turn has stopped taking steps. */
+  get stopped(): boolean {
+    return this.#stopReason !== undefined;
+  }
+
+  /** Whether another tool step may start after `steps` completed ones. */
+  allowsAnotherStep(steps: number): boolean {
+    return !this.stopped && steps < this.#effectiveLimit;
+  }
+
+  /** Whether the step just run reached the budget, so tool use ends here. */
+  atLimit(steps: number): boolean {
+    return this.stopped || steps >= this.#effectiveLimit;
+  }
+
+  /**
+   * Decide what the step just completed means for the budget. Ceiling and
+   * spend outrank progress; the soft limit is where the question is first
+   * asked, so a step inside it always continues.
+   */
+  decide(outcome: StepOutcome): StepDecision {
+    if (this.#stopReason !== undefined) return this.#stop(this.#stopReason);
+    if (outcome.step >= this.ceiling) return this.#stop("ceiling");
+    if (outcome.step < this.softLimit) return { kind: "continue" };
+    if (
+      outcome.turnSpentUsd >= outcome.turnLimitUsd ||
+      outcome.stallSpentUsd >= outcome.runawayStallUsd
+    ) {
+      return this.#stop("budget");
+    }
+    if (!this.extension) return this.#stop("limit");
+    if (!outcome.productive) {
+      this.#stalledSteps += 1;
+      if (this.#stalledSteps >= STALL_STEPS) return this.#stop("stall");
+    } else {
+      this.#stalledSteps = 0;
+    }
+    return this.#extend();
+  }
+
+  #extend(): StepDecision {
+    const from = this.#effectiveLimit;
+    const to = Math.min(this.ceiling, from + extensionChunk(this.softLimit));
+    this.#effectiveLimit = to;
+    return { kind: "extended", from, to };
+  }
+
+  #stop(reason: StepStopReason): StepDecision {
+    this.#stopReason = reason;
+    return { kind: "stop", reason, effectiveLimit: this.#effectiveLimit };
+  }
+}

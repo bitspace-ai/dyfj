@@ -76,6 +76,11 @@ export interface WorkbenchRuntimeStatus {
   maxToolSteps: number;
   /** The highest tool-step limit a session may set (`/steps N`). */
   maxToolStepsCeiling: number;
+  /**
+   * Whether a turn making forward progress may step past its soft limit
+   * toward the ceiling. Absent from a runtime that predates it.
+   */
+  stepExtension?: boolean;
   /** The effort a Codex ChatGPT turn runs at when it names none. */
   codexReasoningEffort: CodexReasoningEffort;
   models: { total: number; local: number; hosted: number };
@@ -129,7 +134,8 @@ export interface RuntimePosture {
     | "defaultRunawayStallUsd"
     | "maxToolSteps"
     | "maxToolStepsCeiling"
-  > & Partial<Pick<WorkbenchConfig, "codexReasoningEffort">>;
+  > &
+    Partial<Pick<WorkbenchConfig, "codexReasoningEffort" | "stepExtension">>;
   defaultCompanionModel?: string | null;
   permissionLevel?: PermissionLevel;
   /** Whether the runtime was started via background autostart. */
@@ -252,6 +258,8 @@ export function runtimeStatus(
       AGENT_DEFAULTS.maxToolSteps,
     maxToolStepsCeiling: options.engineConfig?.maxToolStepsCeiling ??
       AGENT_DEFAULTS.maxToolStepsCeiling,
+    stepExtension: options.engineConfig?.stepExtension ??
+      AGENT_DEFAULTS.stepExtension,
     codexReasoningEffort: options.engineConfig?.codexReasoningEffort ??
       "medium",
     // Locality counts use the same provider+loopback classification as

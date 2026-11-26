@@ -55,6 +55,11 @@ export interface SessionPosture {
   maxToolSteps?: number;
   /** The highest limit a session may set; absent from an older runtime. */
   maxToolStepsCeiling?: number;
+  /**
+   * Whether a productive turn may step past its soft limit toward the
+   * ceiling; absent from a runtime that predates it.
+   */
+  stepExtension?: boolean;
   /** The session's spend limits: its own, else the runtime's defaults. */
   budget?: SessionBudget;
   /** The tool sandbox segment (BIT-662); absent from an older runtime. */
@@ -154,7 +159,13 @@ export function formatPostureLine(posture: SessionPosture): string {
     : "unknown";
   const steps = posture.maxToolSteps === undefined
     ? ""
-    : ` · ${formatToolSteps(posture.maxToolSteps, posture.maxToolStepsCeiling)}`;
+    : ` · ${
+      formatToolSteps(
+        posture.maxToolSteps,
+        posture.maxToolStepsCeiling,
+        posture.stepExtension,
+      )
+    }`;
   const roots = formatRoots(posture.workspace, posture.additionalRoots);
   return `posture: ${posture.slug} · ${tier} · ${locality}${speed} · ${paid} · ` +
     `permission ${posture.permissionLevel ?? "unknown"} · ` +
@@ -201,10 +212,22 @@ function sandboxField(
   return segment === null ? {} : { sandbox: segment };
 }
 
-/** "N tool steps (ceiling M)", without the ceiling an older runtime omits. */
-export function formatToolSteps(steps: number, ceiling?: number): string {
+/**
+ * "N tool steps (ceiling M)", without the ceiling an older runtime omits, and
+ * "(extends on progress)" when the turn may step past N toward the ceiling.
+ * An older runtime reports neither field, so its segment is unchanged.
+ */
+export function formatToolSteps(
+  steps: number,
+  ceiling?: number,
+  extension?: boolean,
+): string {
+  const parts = [
+    ...(ceiling === undefined ? [] : [`ceiling ${ceiling}`]),
+    ...(extension === true ? ["extends on progress"] : []),
+  ];
   return `${steps} tool steps` +
-    (ceiling === undefined ? "" : ` (ceiling ${ceiling})`);
+    (parts.length === 0 ? "" : ` (${parts.join(", ")})`);
 }
 
 /**
@@ -294,6 +317,9 @@ export async function fetchSessionPosture(
         ...(runtime?.maxToolStepsCeiling !== undefined
           ? { maxToolStepsCeiling: runtime.maxToolStepsCeiling }
           : {}),
+        ...(runtime?.stepExtension === undefined
+          ? {}
+          : { stepExtension: runtime.stepExtension }),
         ...(runtime?.fingerprint !== undefined
           ? { runtimeFingerprint: runtime.fingerprint }
           : {}),

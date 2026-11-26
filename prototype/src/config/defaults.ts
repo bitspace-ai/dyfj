@@ -14,6 +14,7 @@ import {
   parseBooleanEnv,
   readMaxToolSteps,
   readPositiveUsd,
+  readStepExtension,
   validateToolStepsWithinCeiling,
 } from "./values.ts";
 
@@ -42,15 +43,18 @@ export const BUDGET_DEFAULTS: BudgetDefaults = {
 };
 
 export interface AgentDefaults {
-  /** Maximum model↔tool loop steps in one turn. */
+  /** Maximum model↔tool loop steps in one turn, before any extension. */
   maxToolSteps: number;
   /** The highest tool-step limit a session may set for itself. */
   maxToolStepsCeiling: number;
+  /** Whether a turn making forward progress may step past its soft limit. */
+  stepExtension: boolean;
 }
 
 export const AGENT_DEFAULTS: AgentDefaults = {
   maxToolSteps: schemaNumberDefault("maxToolSteps"),
   maxToolStepsCeiling: schemaNumberDefault("maxToolStepsCeiling"),
+  stepExtension: schemaBooleanDefault("stepExtension"),
 };
 
 export function resolveAgentDefaultsFromEnv(
@@ -67,7 +71,15 @@ export function resolveAgentDefaultsFromEnv(
     AGENT_DEFAULTS.maxToolStepsCeiling,
   );
   validateToolStepsWithinCeiling(maxToolSteps, maxToolStepsCeiling);
-  return { maxToolSteps, maxToolStepsCeiling };
+  return {
+    maxToolSteps,
+    maxToolStepsCeiling,
+    stepExtension: readStepExtension(
+      env,
+      schemaEnvVar("stepExtension"),
+      AGENT_DEFAULTS.stepExtension,
+    ),
+  };
 }
 
 /**
@@ -160,6 +172,7 @@ export interface RuntimeEnvDefaults {
   trustWorkspaceInstructions: boolean;
   maxToolSteps: number;
   maxToolStepsCeiling: number;
+  stepExtension: boolean;
 }
 
 /**
@@ -191,5 +204,6 @@ export function resolveRuntimeEnvDefaults(
     defaultRunawayStallUsd: budget.runawayStallUsd,
     maxToolSteps: agent.maxToolSteps,
     maxToolStepsCeiling: agent.maxToolStepsCeiling,
+    stepExtension: agent.stepExtension,
   };
 }

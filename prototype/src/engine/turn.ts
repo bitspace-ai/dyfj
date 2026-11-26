@@ -198,6 +198,8 @@ export interface ExecuteTurnDeps {
   maxToolSteps?: number;
   /** The highest tool-step limit a turn request may set (config). */
   maxToolStepsCeiling?: number;
+  /** Whether a productive turn may step past its soft limit (config). */
+  stepExtension?: boolean;
   /** The configured effort for a Codex ChatGPT turn that names none. */
   defaultCodexReasoningEffort?: CodexReasoningEffort;
   /** Configured idle limit in seconds for an interactive Codex ChatGPT session. */
@@ -242,7 +244,7 @@ export function engineConfigToTurnDeps(
   > & Partial<
     Pick<
       WorkbenchConfig,
-      "codexReasoningEffort" | "codexInteractiveIdleSeconds" | "codexOperatorContext" | "codexPath" | "codexExtraPath" | "codexEnvAllow" | "openRouterConfig" | "compressionTriggerTokens" | "operatorInstructions"
+      "stepExtension" | "codexReasoningEffort" | "codexInteractiveIdleSeconds" | "codexOperatorContext" | "codexPath" | "codexExtraPath" | "codexEnvAllow" | "openRouterConfig" | "compressionTriggerTokens" | "operatorInstructions"
     >
   >,
 ): Pick<
@@ -258,6 +260,7 @@ export function engineConfigToTurnDeps(
   | "defaultRunawayStallUsd"
   | "maxToolSteps"
   | "maxToolStepsCeiling"
+  | "stepExtension"
   | "defaultCodexReasoningEffort"
   | "codexInteractiveIdleSeconds"
   | "codexOperatorContext" | "codexPath" | "codexExtraPath" | "codexEnvAllow"
@@ -277,6 +280,9 @@ export function engineConfigToTurnDeps(
     defaultRunawayStallUsd: config.defaultRunawayStallUsd,
     maxToolSteps: config.maxToolSteps,
     maxToolStepsCeiling: config.maxToolStepsCeiling,
+    ...(config.stepExtension === undefined
+      ? {}
+      : { stepExtension: config.stepExtension }),
     ...(config.codexReasoningEffort
       ? { defaultCodexReasoningEffort: config.codexReasoningEffort }
       : {}),
@@ -473,6 +479,9 @@ function runExecuteTurn(
     ...(deps.maxToolStepsCeiling !== undefined
       ? { maxToolStepsCeiling: deps.maxToolStepsCeiling }
       : {}),
+    ...(deps.stepExtension === undefined
+      ? {}
+      : { stepExtension: deps.stepExtension }),
     // the request's own limit, checked against the ceiling at resolution
     ...(resolved.maxToolSteps !== undefined
       ? { maxToolSteps: resolved.maxToolSteps }

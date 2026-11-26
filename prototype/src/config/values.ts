@@ -93,6 +93,23 @@ export function readMaxToolSteps(
 }
 
 /**
+ * Whether a turn making forward progress may step past its soft limit
+ * (`[agent] step_extension` / `DYFJ_STEP_EXTENSION`). Unset or empty takes
+ * the default; any other value must be a boolean, and a malformed one fails
+ * the load like every other boolean binding.
+ */
+export function readStepExtension(
+  env: Env,
+  envVar: string,
+  fallback: boolean,
+): boolean {
+  const raw = env.get(envVar);
+  const trimmed = raw?.trim();
+  if (trimmed === undefined || trimmed === "") return fallback;
+  return parseBooleanEnv(trimmed, envVar);
+}
+
+/**
  * Read an optional integer from the environment. A value that is not a plain
  * base-10 integer throws; the caller validates its bounds.
  */

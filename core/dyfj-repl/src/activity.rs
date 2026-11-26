@@ -44,11 +44,46 @@ pub fn describe(event: &Value) -> Option<String> {
         "toolCallStarted" => Some(format!("  → {}", call_label(event))),
         "toolCallCompleted" => Some(format!("  {}", completed_call(event))),
         "toolStepLimitReached" => match event.get("maxSteps").and_then(Value::as_i64) {
-            Some(max) => Some(format!(
-                "· tool step limit reached ({max} steps); asking the model for a handoff"
-            )),
+            Some(max) => {
+                // The soft limit, when the turn extended past it, so the
+                // operator can see the policy that produced this number.
+                let soft = event.get("softLimit").and_then(Value::as_i64);
+                let policy = match soft {
+                    Some(soft) if soft != max => format!(" (soft {soft}, extended)"),
+                    _ => String::new(),
+                };
+                Some(format!(
+                    "· tool step limit reached ({max} steps{policy}); asking the model for a handoff"
+                ))
+            }
             None => Some("· tool step limit reached; asking the model for a handoff".into()),
         },
+        // The soft step limit was raised because the step made progress.
+        "stepBudgetExtended" => {
+            let from = event.get("from").and_then(Value::as_i64).unwrap_or(0);
+            let to = event.get("to").and_then(Value::as_i64).unwrap_or(0);
+            let ceiling = event.get("ceiling").and_then(Value::as_i64).unwrap_or(0);
+            Some(format!(
+                "· step budget extended {from} → {to} on progress (ceiling {ceiling})"
+            ))
+        }
+        // The step budget stopped the turn: a stall, the ceiling, or spend.
+        "stepBudgetStopped" => {
+            let reason = event
+                .get("reason")
+                .and_then(Value::as_str)
+                .map(crate::approval::visible)
+                .unwrap_or_else(|| "stop".into());
+            let limit = event.get("effectiveLimit").and_then(Value::as_i64);
+            let soft = event.get("softLimit").and_then(Value::as_i64);
+            Some(match (limit, soft) {
+                (Some(limit), Some(soft)) => format!(
+                    "· step budget stopped at {limit} steps (soft {soft}): {reason}"
+                ),
+                (Some(limit), None) => format!("· step budget stopped at {limit} steps: {reason}"),
+                (None, _) => format!("· step budget stopped: {reason}"),
+            })
+        }
         // A handoff the model wrote is the reply itself; only the fallback
         // needs saying, because the reply is then the runtime's notice.
         "toolStepLimitHandoff" => (event.get("source").and_then(Value::as_str) == Some("notice"))

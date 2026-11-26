@@ -112,8 +112,29 @@ pub fn line(receipt: &Value, repl_total: f64) -> String {
             .and_then(Value::as_bool)
             == Some(true);
         let handoff = receipt.pointer("/agent/handoff").and_then(Value::as_str);
+        // The effective step policy: the soft limit the turn was configured
+        // for, and why the budget stopped it. Absent from an older runtime,
+        // which renders the line this client always printed.
+        let soft = receipt
+            .pointer("/agent/softToolSteps")
+            .and_then(Value::as_u64);
+        let stopped = receipt
+            .pointer("/agent/stepStopReason")
+            .and_then(Value::as_str);
+        let mut policy = Vec::new();
+        if let Some(soft) = soft.filter(|soft| *soft != max) {
+            policy.push(format!("soft {soft}"));
+        }
+        if let Some(stopped) = stopped {
+            policy.push(format!("stopped: {}", crate::approval::visible(stopped)));
+        }
+        let policy = if policy.is_empty() {
+            String::new()
+        } else {
+            format!(" ({})", policy.join(", "))
+        };
         parts.push(format!(
-            "tools {used}/{max}{}",
+            "tools {used}/{max}{policy}{}",
             match (limit, handoff) {
                 (false, _) => "",
                 (true, Some("model")) => " (limit reached · handoff)",

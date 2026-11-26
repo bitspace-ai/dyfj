@@ -62,6 +62,10 @@ export interface WorkbenchReceiptInput {
     maxToolSteps: number;
     limitReached: boolean;
     handoff?: "model" | "notice";
+    /** The configured soft limit, before any extension. */
+    softToolSteps?: number;
+    /** Why the step budget stopped tool use. */
+    stepStopReason?: "limit" | "ceiling" | "stall" | "budget";
     autoApprovals?: AutoApprovals;
   };
   /**
@@ -106,6 +110,35 @@ function actualCost(usd: number, basis: CostBasis | undefined): string {
     : `~${formatMoney(usd)} (catalog estimate)`;
 }
 
+/**
+ * The effective step policy, in parentheses: the soft limit the turn was
+ * configured for, and — when the budget stopped it rather than the model —
+ * why. Empty for a turn inside its soft limit, so a short turn's receipt is
+ * what it always was.
+ */
+export function stepPolicySegment(agent: {
+  softToolSteps?: number;
+  maxToolSteps: number;
+  stepStopReason?: "limit" | "ceiling" | "stall" | "budget";
+  limitReached: boolean;
+}): string {
+  const parts: string[] = [];
+  // A turn inside its soft limit reports nothing extra: its receipt is the
+  // one it always was. Past it, the soft limit is named, because the reported
+  // limit is then the extended one.
+  if (
+    agent.softToolSteps !== undefined &&
+    (agent.softToolSteps !== agent.maxToolSteps ||
+      agent.stepStopReason !== undefined)
+  ) {
+    parts.push(`soft ${agent.softToolSteps}`);
+  }
+  if (agent.stepStopReason !== undefined) {
+    parts.push(`stopped: ${agent.stepStopReason}`);
+  }
+  return parts.length === 0 ? "" : ` (${parts.join(", ")})`;
+}
+
 export function buildWorkbenchReceipt(input: WorkbenchReceiptInput): string {
   const lines = [
     "Workbench receipt",
@@ -138,6 +171,7 @@ export function buildWorkbenchReceipt(input: WorkbenchReceiptInput): string {
     } written`,
     `Calls:   ${input.totalCalls}`,
     `Tool steps: ${input.agent.toolStepsUsed}/${input.agent.maxToolSteps}` +
+      stepPolicySegment(input.agent) +
       (input.agent.limitReached
         ? input.agent.handoff === "model"
           ? " (limit reached; handoff)"
