@@ -19,6 +19,7 @@ import {
   dsmlChunksAt,
   dsmlPartialBlock,
   dsmlTag,
+  DSML_INVALID_OFFERED_BLOCK,
   DSML_PIPE,
 } from "../../../testing/providers/dsml-fixtures.ts";
 
@@ -971,6 +972,128 @@ describe("DeepSeek DSML markup split across deltas", () => {
     assert.strictEqual(unoffered.result.text, DSML_GATE_WAIT_BLOCK);
     assert.strictEqual(unoffered.deltas.join(""), DSML_GATE_WAIT_BLOCK);
     assert.deepStrictEqual(unoffered.result.unparsedToolCallMarkup, {
+      count: 1,
+      countIsLowerBound: false,
+    });
+  });
+});
+
+// A reply can hold markup-shaped prose as well as a real block: prose that
+// mentions the wrapper opener, a block naming an offered tool that is not
+// recoverable markup, or both in either order. None of those may make the
+// present a turn fails, and none may leave a recovered block visible or
+// flagged (BIT-991).
+describe("markup-shaped prose beside a recovered DSML block", () => {
+  const streamOf = async (chunks: readonly string[], toolNames: string[]) => {
+    const deltas: string[] = [];
+    const transport = new ScriptedHttpTransport([{
+      respond: {
+        body: sse([
+          ...chunks.map((content) => ({ choices: [{ delta: { content } }] })),
+          { choices: [{ delta: {}, finish_reason: "stop" }] },
+        ]),
+      },
+    }]);
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "continue",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      tools: toolNames.map(dsmlTool),
+      onTextDelta: (delta) => deltas.push(delta),
+      fetchFn: transport.fetch,
+    });
+    transport.assertDone();
+    return { result, deltas };
+  };
+  const bashCall = {
+    id: "text-tool-1",
+    name: "bash",
+    arguments: { command: DSML_BASH_COMMAND },
+  };
+
+  it("A1: forwards a stray wrapper opener in prose that ends near a valid block", async () => {
+    const opener = dsmlTag("spaced", "calls");
+    const before = `The ${opener} wrapper. More words. `;
+    const after = " done";
+    const { result, deltas } = await streamOf(
+      [before, DSML_BASH_BLOCK, after],
+      ["bash"],
+    );
+
+    assert.deepStrictEqual(result.toolCalls, [bashCall]);
+    assert.strictEqual(result.text, `${before}${after}`);
+    assert.strictEqual(deltas.join(""), result.text);
+    assert.strictEqual(result.unparsedToolCallMarkup, undefined);
+  });
+
+  it("A2: forwards the same stray opener when the reply arrives in one delta", async () => {
+    const opener = dsmlTag("spaced", "calls");
+    const before = `The ${opener} wrapper. More words. `;
+    const after = " done";
+    const { result, deltas } = await streamOf(
+      [`${before}${DSML_BASH_BLOCK}${after}`],
+      ["bash"],
+    );
+
+    assert.deepStrictEqual(result.toolCalls, [bashCall]);
+    assert.strictEqual(result.text, `${before}${after}`);
+    assert.strictEqual(deltas.join(""), result.text);
+    assert.strictEqual(result.unparsedToolCallMarkup, undefined);
+  });
+
+  it("K1: shows an invalid offered block that follows a valid one, flagged once", async () => {
+    const after = " end";
+    const { result, deltas } = await streamOf(
+      [DSML_BASH_BLOCK, " then ", DSML_INVALID_OFFERED_BLOCK, after],
+      ["bash"],
+    );
+
+    assert.deepStrictEqual(result.toolCalls, [bashCall]);
+    assert.strictEqual(
+      result.text,
+      ` then ${DSML_INVALID_OFFERED_BLOCK}${after}`,
+    );
+    assert.strictEqual(deltas.join(""), result.text);
+    assert.deepStrictEqual(result.unparsedToolCallMarkup, {
+      count: 1,
+      countIsLowerBound: false,
+    });
+  });
+
+  it("K2: shows an invalid offered block ahead of a valid one in one delta", async () => {
+    const after = " end";
+    const { result, deltas } = await streamOf(
+      [`${DSML_INVALID_OFFERED_BLOCK} mid ${DSML_BASH_BLOCK}${after}`],
+      ["bash"],
+    );
+
+    assert.deepStrictEqual(result.toolCalls, [bashCall]);
+    assert.strictEqual(
+      result.text,
+      `${DSML_INVALID_OFFERED_BLOCK} mid ${after}`,
+    );
+    assert.strictEqual(deltas.join(""), result.text);
+    assert.deepStrictEqual(result.unparsedToolCallMarkup, {
+      count: 1,
+      countIsLowerBound: false,
+    });
+  });
+
+  it("K3: shows an invalid offered block that precedes a valid one", async () => {
+    const after = " end";
+    const { result, deltas } = await streamOf(
+      [DSML_INVALID_OFFERED_BLOCK, " mid ", DSML_BASH_BLOCK, after],
+      ["bash"],
+    );
+
+    assert.deepStrictEqual(result.toolCalls, [bashCall]);
+    assert.strictEqual(
+      result.text,
+      `${DSML_INVALID_OFFERED_BLOCK} mid ${after}`,
+    );
+    assert.strictEqual(deltas.join(""), result.text);
+    assert.deepStrictEqual(result.unparsedToolCallMarkup, {
       count: 1,
       countIsLowerBound: false,
     });

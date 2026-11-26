@@ -69,10 +69,18 @@ const MAX_DSML_SEPARATOR_LENGTH = Math.max(
   ...DSML_SEPARATORS.map((separator) => separator.length),
 );
 
-/** Longest wrapper element name (`function_calls`). */
-const MAX_DSML_WRAPPER_NAME_LENGTH = Math.max(
-  ...DSML_WRAPPER_NAMES.map((name) => name.length),
-);
+/**
+ * Longest closing tag the parser accepts: `</`, a separator, `DSML`, the
+ * separator, the space after it, the longest element name, the whitespace the
+ * parser allows before `>`, and `>` itself. A reader that looks for a closing
+ * wrapper only needs to re-read this many trailing characters of the text it
+ * is withholding, so a block held across many deltas is probed in time linear
+ * in the characters that arrived rather than in the withheld length.
+ */
+export const MAX_DSML_CLOSING_TAG_LENGTH = "</".length +
+  MAX_DSML_SEPARATOR_LENGTH + DSML_MARKER_COUNT.length +
+  MAX_DSML_SEPARATOR_LENGTH + (2 * MAX_TEXT_TOOL_WRAPPER_WHITESPACE) +
+  Math.max(...[...DSML_TAG_NAMES].map((name) => name.length)) + ">".length;
 
 function isDsmlSpace(character: string): boolean {
   return character === " " || character === "\t" || character === "\n" ||
@@ -132,7 +140,7 @@ function nextDsmlTagStart(text: string, from: number): number {
  * separator and element name, or -1. A cheap gate a streaming reader can use
  * before paying for a whole-block parse.
  */
-export function dsmlClosingTagIndex(text: string, from: number): number {
+function dsmlClosingTagIndex(text: string, from: number): number {
   let earliest = -1;
   for (const separator of DSML_SEPARATORS) {
     const token = `</${separator}DSML${separator}`;
@@ -172,7 +180,7 @@ export function dsmlWrapperClosingEnd(text: string, from: number): number {
  * still undecided past it is prose, not markup on its way, so a reader stops
  * withholding there instead of holding the rest of the reply back.
  */
-export const MAX_DSML_UNDECIDED_PREFIX = 64 + MAX_DSML_NAME_LENGTH +
+const MAX_DSML_UNDECIDED_PREFIX = 64 + MAX_DSML_NAME_LENGTH +
   MAX_TEXT_TOOL_WRAPPER_WHITESPACE;
 
 /**
@@ -570,6 +578,9 @@ function scanDsmlBlock(text: string, wrapperStart: number): DsmlBlockScan {
     if (invokeName === undefined || invokeName.length === 0) {
       return failedBlockScan({ invalid: true, invokeNames, structureRevealed });
     }
+    // The name is recorded before its body is read, so a block the text cuts
+    // off inside an invoke still reports the tool that invoke named.
+    invokeNames.push(invokeName);
     const invoke = scanInvoke(text, elementTag.end);
     if (!invoke.ok) {
       return failedBlockScan({
@@ -579,7 +590,6 @@ function scanDsmlBlock(text: string, wrapperStart: number): DsmlBlockScan {
         structureRevealed,
       });
     }
-    invokeNames.push(invokeName);
     if (!invoke.argumentsRecoverable) argumentsRecoverable = false;
     else calls.push({ name: invokeName, arguments: invoke.arguments });
     i = invoke.end;
@@ -646,6 +656,66 @@ export function extractDsmlToolCalls(
     at = nextDsmlTagStart(text, at + 1);
   }
   return { removals, unrecoverable };
+}
+
+/**
+ * The index of the earliest DSML markup the text cuts off while a streaming
+ * reader could still be withholding it, or -1. Two shapes qualify, and each
+ * mirrors the withholding rule a reader applies delta by delta, so a caller
+ * that strips this suffix never cuts text it has already forwarded:
+ *
+ * - the text ends inside a wrapper opening that could still become one, or a
+ *   whole wrapper opening with no invoke revealed after it, and the span is
+ *   within `MAX_DSML_UNDECIDED_PREFIX` (the reader withholds it only that far);
+ * - the block revealed an invoke naming an offered tool and then the text
+ *   ended, whether inside an invoke name that only prefixes an offered one or
+ *   past a whole invoke whose name is offered (the reader withholds that
+ *   unconditionally, because recovery would run it if it had arrived whole).
+ *
+ * A block that closed but did not follow the dialect is prose the reader
+ * already released, and it is never reported here.
+ */
+export function dsmlTruncatedBlockStart(
+  text: string,
+  offeredNames: ReadonlySet<string> | undefined,
+): number {
+  if (offeredNames === undefined || offeredNames.size === 0) return -1;
+  let at = nextDsmlTagStart(text, 0);
+  let candidates = 0;
+  while (at >= 0 && candidates < MAX_TEXT_TOOL_MARKUP_CANDIDATES) {
+    candidates += 1;
+    const undecided = text.length - at <= MAX_DSML_UNDECIDED_PREFIX;
+    const wrapper = parseDsmlTag(text, at);
+    if (!wrapper.ok) {
+      if (
+        wrapper.truncated && wrapper.partial !== undefined &&
+        !wrapper.partial.closing && couldBecomeWrapper(wrapper.partial) &&
+        undecided
+      ) return at;
+      at = nextDsmlTagStart(text, at + 1);
+      continue;
+    }
+    if (wrapper.tag.closing || !isWrapperName(wrapper.tag.name)) {
+      at = nextDsmlTagStart(text, at + 1);
+      continue;
+    }
+    const scan = scanDsmlBlock(text, at);
+    if (!scan.truncated) {
+      at = nextDsmlTagStart(text, at + 1);
+      continue;
+    }
+    const namedOffered = scan.invokeNames.length > 0 &&
+      scan.invokeNames.every((name) => offeredNames.has(name));
+    const pending = scan.pendingInvokeName;
+    const startingOffered = pending !== undefined &&
+      [...offeredNames].some((offered) => offered.startsWith(pending));
+    if (namedOffered || startingOffered) return at;
+    if (scan.invokeNames.length === 0 && scan.pendingInvokeName === undefined) {
+      if (undecided) return at;
+    }
+    at = nextDsmlTagStart(text, at + 1);
+  }
+  return -1;
 }
 
 /**

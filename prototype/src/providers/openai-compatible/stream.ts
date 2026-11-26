@@ -35,6 +35,7 @@ import {
   dsmlBlockEnd,
   dsmlPartialOpeningStart,
   dsmlWrapperClosingEnd,
+  MAX_DSML_CLOSING_TAG_LENGTH,
 } from "../shared/dsml-tool-calls.ts";
 import { finiteNonnegativeTokenCount } from "../shared/tokens.ts";
 import { toolWireNames } from "../shared/tool-names.ts";
@@ -294,6 +295,32 @@ export async function readOpenAIChatStream(
 }
 
 /**
+ * Counts one markup marker's occurrences across the deltas of a reply, carrying
+ * the tail a marker may straddle, and reports whether the count has passed the
+ * bound that makes text recovery unsafe. Each counter owns one marker.
+ */
+function createMarkupCandidateCounter(limit: number) {
+  let count = 0;
+  let tail = "";
+  return {
+    /** Whether the count passed `limit`; the count stops being exact there. */
+    get exceeded(): boolean {
+      return count > limit;
+    },
+    observe(delta: string, marker: string): void {
+      const update = countNewTextToolMarkupCandidates(
+        tail,
+        delta,
+        marker,
+        limit - count,
+      );
+      tail = update.tail;
+      count += update.count;
+    },
+  };
+}
+
+/**
  * Live presentation of streamed text. Text is forwarded to `onTextDelta` as it
  * arrives, except for a recognized offered-tool block of either markup dialect,
  * which is withheld until it closes: recoverable markup stays hidden, and
@@ -310,14 +337,24 @@ function createTextPresenter(
   let text = "";
   /** Which dialect is being withheld, or undefined when nothing is. */
   let suppressing: "qwen" | "dsml" | undefined;
+  /**
+   * While withholding: the index of `pending` already probed for the block's
+   * close tag, and the index just past that tag once it was found. Both reset
+   * when withholding begins, so a block held across many deltas costs a probe
+   * over the characters that arrived rather than a rescan of the whole
+   * withheld span at each delta.
+   */
+  let closingSearchFrom = 0;
+  let closingTagEnd = -1;
   let sawTextToolMarkup = false;
   let textToolRecoveryDisabled = !tools || tools.length === 0;
-  let functionCandidates = 0;
-  let parameterCandidates = 0;
-  let dsmlCandidates = 0;
-  let functionCandidateTail = "";
-  let parameterCandidateTail = "";
-  let dsmlCandidateTail = "";
+  const functionCandidates = createMarkupCandidateCounter(
+    MAX_TEXT_TOOL_MARKUP_CANDIDATES,
+  );
+  const parameterCandidates = createMarkupCandidateCounter(
+    MAX_TEXT_TOOL_MARKUP_CANDIDATES,
+  );
+  const dsmlCandidates = createMarkupCandidateCounter(MAX_DSML_MARKUP_TOKENS);
   /**
    * The text not yet decided: what the reader still has to look at, drained as
    * it is emitted or withheld. Every scan reads this short tail, never the
@@ -356,6 +393,38 @@ function createTextPresenter(
     }
     pending = pending.slice(end);
     suppressing = undefined;
+    closingSearchFrom = 0;
+    closingTagEnd = -1;
+  };
+  /** Start withholding `pending` from its beginning in one dialect. */
+  const beginWithholding = (dialect: "qwen" | "dsml") => {
+    suppressing = dialect;
+    closingSearchFrom = 0;
+    closingTagEnd = -1;
+  };
+  /** Index just past the close tag of the block being withheld, or -1. */
+  const withheldClosingEnd = (): number => {
+    if (closingTagEnd >= 0) return closingTagEnd;
+    // Only the characters that arrived since the last probe can hold the
+    // start of a close tag, plus the longest tag's worth of overlap in case
+    // one straddled the previous delta.
+    const from = Math.max(0, closingSearchFrom - (MAX_DSML_CLOSING_TAG_LENGTH - 1));
+    if (suppressing === "qwen") {
+      const closing = pending.indexOf("</tool_call>", from);
+      if (closing < 0) {
+        closingSearchFrom = pending.length;
+        return -1;
+      }
+      closingTagEnd = closing + "</tool_call>".length;
+      return closingTagEnd;
+    }
+    const end = dsmlWrapperClosingEnd(pending, from);
+    if (end < 0) {
+      closingSearchFrom = pending.length;
+      return -1;
+    }
+    closingTagEnd = end;
+    return end;
   };
   const forwardAvailableText = () => {
     while (true) {
@@ -366,22 +435,26 @@ function createTextPresenter(
       if (suppressing === "dsml") {
         // A closing wrapper tag is the cheap proof the block ended; the parse
         // then runs once, on the whole block, rather than on every delta.
-        if (dsmlWrapperClosingEnd(pending, 0) < 0) return;
+        if (withheldClosingEnd() < 0) return;
         const end = dsmlBlockEnd(pending, 0);
         if (end < 0) {
           // The wrapper closed around something that is not a DSML block, so
-          // the markup is prose after all: release it and read on.
-          release(pending.length);
+          // that markup is prose after all. Release it only as far as its own
+          // close tag, then read on: a recoverable block may follow in the
+          // same text, and it must not be released with the prose.
+          const proseEnd = closingTagEnd;
           suppressing = undefined;
-          return;
+          closingSearchFrom = 0;
+          closingTagEnd = -1;
+          release(proseEnd);
+          continue;
         }
         settleWithheld(end);
         continue;
       }
       if (suppressing === "qwen") {
-        const closing = pending.indexOf("</tool_call>");
-        if (closing < 0) return;
-        settleWithheld(closing + "</tool_call>".length);
+        if (withheldClosingEnd() < 0) return;
+        settleWithheld(closingTagEnd);
         continue;
       }
       const dsmlStart = dsmlRecoverableMarkupStart(pending, tools);
@@ -391,7 +464,7 @@ function createTextPresenter(
         : qwenStart;
       if (markupStart >= 0) {
         release(markupStart);
-        suppressing = markupStart === dsmlStart ? "dsml" : "qwen";
+        beginWithholding(markupStart === dsmlStart ? "dsml" : "qwen");
         continue;
       }
       const safeStarts = [
@@ -414,39 +487,18 @@ function createTextPresenter(
     },
     append(delta: string): void {
       if (!textToolRecoveryDisabled) {
-        const functionUpdate = countNewTextToolMarkupCandidates(
-          functionCandidateTail,
-          delta,
-          TEXT_FUNCTION_MARKER,
-          MAX_TEXT_TOOL_MARKUP_CANDIDATES - functionCandidates,
-        );
-        functionCandidateTail = functionUpdate.tail;
-        functionCandidates += functionUpdate.count;
-        const parameterUpdate = countNewTextToolMarkupCandidates(
-          parameterCandidateTail,
-          delta,
-          TEXT_PARAMETER_MARKER,
-          MAX_TEXT_TOOL_MARKUP_CANDIDATES - parameterCandidates,
-        );
-        parameterCandidateTail = parameterUpdate.tail;
-        parameterCandidates += parameterUpdate.count;
-        const dsmlUpdate = countNewTextToolMarkupCandidates(
-          dsmlCandidateTail,
-          delta,
-          DSML_MARKER_COUNT,
-          MAX_DSML_MARKUP_TOKENS - dsmlCandidates,
-        );
-        dsmlCandidateTail = dsmlUpdate.tail;
-        dsmlCandidates += dsmlUpdate.count;
+        functionCandidates.observe(delta, TEXT_FUNCTION_MARKER);
+        parameterCandidates.observe(delta, TEXT_PARAMETER_MARKER);
+        dsmlCandidates.observe(delta, DSML_MARKER_COUNT);
       }
       text += delta;
       pending += delta;
       if (
         !textToolRecoveryDisabled &&
         (
-          functionCandidates > MAX_TEXT_TOOL_MARKUP_CANDIDATES ||
-          parameterCandidates > MAX_TEXT_TOOL_MARKUP_CANDIDATES ||
-          dsmlCandidates > MAX_DSML_MARKUP_TOKENS
+          functionCandidates.exceeded ||
+          parameterCandidates.exceeded ||
+          dsmlCandidates.exceeded
         )
       ) {
         if (sawTextToolMarkup) {

@@ -33,20 +33,26 @@ README are tracked separately in its Revision history section.
   block left in the text, or one the reply cuts off once it has revealed DSML
   structure past its opening — rather than treating it as an answer. The
   streaming presenter withholds a DSML block as it arrives, so the raw markup
-  never flashes to the terminal, and an aborted turn strips a DSML block it had
-  withheld. A markup opener a tokenizer splits across deltas is withheld too,
-  including a fragment as short as `<` and the separator run, and the prose
-  after a recovered block is forwarded as it arrives instead of waiting for the
-  stream to end. A block is only withheld while it may still turn out
-  recoverable: once a candidate block has grown past the bound a wrapper and its
-  invoke tag fit in, it is prose and the reader releases it, so markup-shaped
-  text in ordinary prose costs no more than that bound. Every scan stays linear
-  and bounded: the separator-wrapped marker count is capped at the same
-  per-element candidate limit as the Qwen dialect
-  scaled to that dialect's tokens per element, the block's end is read once per
-  block rather than once per delta, the presenter scans only the text it has not
-  decided yet rather than the whole reply at each delta, and the whole-text scan
-  keeps the accepted-response bound. The bounds, the argument-budget helper and
+  never flashes to the terminal, and a reply that ends inside a block it was
+  still withholding drops that block from the text instead of showing it. A
+  block that closed but does not follow the dialect is prose: it is released
+  only as far as its own close tag and the reader carries on, so a recoverable
+  block later in the same reply is still recovered rather than shown, and the
+  delivery never cuts text it already forwarded. A markup opener a tokenizer
+  splits across deltas is withheld too, including a fragment as short as `<`
+  and the separator run, and the prose after a recovered block is forwarded as
+  it arrives instead of waiting for the stream to end. A block is only withheld
+  while it may still turn out recoverable: once a candidate block has grown
+  past the bound a wrapper and its invoke tag fit in, it is prose and the reader
+  releases it, so markup-shaped text in ordinary prose costs no more than that
+  bound. Every scan stays linear and bounded: the separator-wrapped marker count
+  is capped at the same per-element candidate limit as the Qwen dialect scaled
+  to that dialect's tokens per element, the search for a withheld block's close
+  tag resumes from the last character already probed rather than restarting at
+  the block's beginning, the block's end is read once per block rather than
+  once per delta, the presenter scans only the text it has not decided yet
+  rather than the whole reply at each delta, and the whole-text scan keeps the
+  accepted-response bound. The bounds, the argument-budget helper and
   its
   coercion moved into `providers/shared/text-markup-bounds.ts` and
   `providers/shared/text-markup-arguments.ts` so no module in the recovery path

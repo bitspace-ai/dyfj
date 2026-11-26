@@ -118,6 +118,17 @@ export const DSML_GATE_WAIT_BLOCK = dsmlBlock("spaced", "gate_wait", [
   ["wait_seconds", ' string="false"', "60"],
 ]);
 
+/**
+ * A complete block in the captured layout whose `parameter` carries no `name`
+ * attribute, so the block names an offered tool but is not recoverable markup.
+ */
+export const DSML_INVALID_OFFERED_BLOCK = `${dsmlTag("spaced", "calls")}\n` +
+  `${dsmlTag("spaced", "invoke", ' name="bash"')}\n` +
+  `${dsmlTag("spaced", "parameter", ' string="true"')}${DSML_BASH_COMMAND}` +
+  `${dsmlCloseTag("spaced", "parameter")}\n` +
+  `${dsmlCloseTag("spaced", "invoke")}\n` +
+  `${dsmlCloseTag("spaced", "calls")}`;
+
 /** Prose to place before a block in a mixed reply. */
 export const DSML_PROSE = "Let me check that.";
 

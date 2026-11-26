@@ -20,6 +20,7 @@ import {
   DSML_MARKER_COUNT,
   dsmlPossibleStart,
   dsmlRecoverableStart,
+  dsmlTruncatedBlockStart,
   extractDsmlToolCalls,
 } from "./dsml-tool-calls.ts";
 import {
@@ -427,14 +428,6 @@ export function extractTextToolCalls(
   return { toolCalls, cleaned };
 }
 
-/** The earliest Qwen markup the reader may withhold from, or -1. */
-export function qwenPossibleTextToolMarkupStart(
-  text: string,
-  tools: WorkbenchToolDefinition[] | undefined,
-): number {
-  return qwenTextToolMarkupStart(text, tools);
-}
-
 /** The earliest DSML markup the reader may withhold from, or -1. */
 export function dsmlPossibleMarkupStart(
   text: string,
@@ -453,15 +446,8 @@ export function dsmlRecoverableMarkupStart(
   return dsmlRecoverableStart(text, offeredWireNames(tools));
 }
 
-/** The earliest Qwen markup recovery can run, or -1. */
-export function qwenConfirmedMarkupStart(
-  text: string,
-  tools: WorkbenchToolDefinition[] | undefined,
-): number {
-  return confirmedQwenTextToolMarkupStart(text, tools);
-}
-
-function qwenTextToolMarkupStart(
+/** The earliest Qwen markup the reader may withhold from, or -1. */
+export function qwenPossibleTextToolMarkupStart(
   text: string,
   tools: WorkbenchToolDefinition[] | undefined,
 ): number {
@@ -547,17 +533,6 @@ function qwenTextToolMarkupStart(
     : -1;
 }
 
-export function possibleTextToolMarkupStart(
-  text: string,
-  tools: WorkbenchToolDefinition[] | undefined,
-): number {
-  if (!tools || tools.length === 0) return -1;
-  return earliestMarker(
-    qwenPossibleTextToolMarkupStart(text, tools),
-    dsmlPossibleStart(text, offeredWireNames(tools)),
-  );
-}
-
 function offeredWireNames(
   tools: WorkbenchToolDefinition[] | undefined,
 ): Set<string> | undefined {
@@ -566,17 +541,8 @@ function offeredWireNames(
     : undefined;
 }
 
-export function confirmedTextToolMarkupStart(
-  text: string,
-  tools: WorkbenchToolDefinition[] | undefined,
-): number {
-  return earliestMarker(
-    confirmedQwenTextToolMarkupStart(text, tools),
-    dsmlRecoverableStart(text, offeredWireNames(tools)),
-  );
-}
-
-function confirmedQwenTextToolMarkupStart(
+/** The earliest Qwen markup recovery can run, or -1. */
+export function qwenConfirmedMarkupStart(
   text: string,
   tools: WorkbenchToolDefinition[] | undefined,
 ): number {
@@ -694,6 +660,16 @@ function recognizedIncompleteTextToolMarkupStart(
   return -1;
 }
 
+/**
+ * Strip a trailing text tool call the reply cut off. Recovery removes every
+ * complete block; what remains is stripped only where a delivered reply could
+ * still be holding markup the presenter never forwarded: an incomplete Qwen
+ * call, or a DSML block the text ends inside while the reader would still be
+ * withholding it (`dsmlTruncatedBlockStart`). A block that arrived whole and
+ * simply did not follow the dialect is prose, and prose the presenter already
+ * forwarded is never cut, because the caller's emitted text must be a prefix
+ * of what it returns.
+ */
 export function stripIncompleteTextToolCallSuffix(
   text: string,
   tools: WorkbenchToolDefinition[] | undefined,
@@ -708,16 +684,13 @@ export function stripIncompleteTextToolCallSuffix(
   );
   if (extraction.unrecoverable) return text;
   const withoutCompleteCalls = extraction.cleaned;
-  const confirmed = confirmedQwenTextToolMarkupStart(
-    withoutCompleteCalls,
-    tools,
-  );
+  const confirmed = qwenConfirmedMarkupStart(withoutCompleteCalls, tools);
   const incomplete = confirmed >= 0
     ? confirmed
     : recognizedIncompleteTextToolMarkupStart(withoutCompleteCalls, tools);
   const qwenCut = incomplete < 0
     ? withoutCompleteCalls
     : withoutCompleteCalls.slice(0, incomplete);
-  const dsmlPossible = dsmlPossibleStart(qwenCut, offered);
-  return dsmlPossible >= 0 ? qwenCut.slice(0, dsmlPossible) : qwenCut;
+  const dsmlCut = dsmlTruncatedBlockStart(qwenCut, offered);
+  return dsmlCut >= 0 ? qwenCut.slice(0, dsmlCut) : qwenCut;
 }
