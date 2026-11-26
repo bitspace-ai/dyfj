@@ -11,22 +11,30 @@
  * globally trusted runtime launched a workspace whose profile declined, and a
  * globally untrusted one refused a workspace whose profile trusted it.
  *
- * Two rules hold whatever the profile says:
+ * Three rules hold whatever the profile says:
  *
  * - Only a loopback caller is eligible. The turn entry already forces the flag
  *   off for remote callers; this is the same backstop the context stage keeps,
  *   so a direct caller of the runtime core cannot elevate a remote turn.
  * - A workspace that cannot be resolved is not trusted. The profile must cover
- *   a root the runtime actually resolved, never a fallback it guessed.
+ *   a canonical directory the runtime actually resolved, never a fallback it
+ *   guessed or a path that is not there.
+ * - The decision names the canonical workspace it was made for, so the runner
+ *   that launches the turn can check the trust against the workspace it
+ *   finally resolved rather than reusing a decision about a different path.
  */
 import process from "node:process";
+import { realpath, stat } from "node:fs/promises";
 import type { WorkspaceConfigResolver } from "../config/mod.ts";
 import {
   type WorkbenchAuthContext,
   workspaceRootForTransport,
 } from "../contract/mod.ts";
 import { fetchWorkbenchSessionWorkspaceRecord } from "../store/mod.ts";
-import type { WorkbenchRuntimeInput, WorkbenchRuntimeServices } from "./runtime-types.ts";
+import type {
+  WorkbenchRuntimeInput,
+  WorkbenchRuntimeServices,
+} from "./runtime-types.ts";
 
 const LOCAL_AUTH_CONTEXT: WorkbenchAuthContext = {
   transport: "loopback",
@@ -40,7 +48,8 @@ const LOCAL_AUTH_CONTEXT: WorkbenchAuthContext = {
  * The workspace the turn runs in, resolved the way the external-agent runner
  * resolves it: the session row's on resume, else the request's, gated by
  * transport, else the runtime's default root. Undefined when a resumed
- * session's row cannot be read: the caller must not elevate on a guess.
+ * session's row cannot be read, or when the path cannot be canonicalized as a
+ * directory: the caller must not elevate on a guess.
  */
 async function workspaceForTrust(
   input: WorkbenchRuntimeInput,
@@ -59,8 +68,25 @@ async function workspaceForTrust(
       return undefined;
     }
   }
-  return workspaceRootForTransport(requested, authContext.transport) ??
+  const selected = workspaceRootForTransport(requested, authContext.transport) ??
     input.rootOverride ?? process.cwd();
+  try {
+    const canonical = await realpath(selected);
+    return (await stat(canonical)).isDirectory() ? canonical : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The instruction-trust decision for one turn, and what it was made about. */
+export interface WorkspaceTrustDecision {
+  readonly trusted: boolean;
+  /**
+   * The canonical workspace the decision was made for. Undefined when the
+   * workspace could not be resolved; `trusted` is false then, and a runner
+   * must not elevate anything.
+   */
+  readonly workspace: string | undefined;
 }
 
 /**
@@ -72,13 +98,23 @@ async function workspaceForTrust(
 export async function resolveWorkspaceTrust(
   input: WorkbenchRuntimeInput,
   services: WorkbenchRuntimeServices,
-): Promise<boolean> {
+): Promise<WorkspaceTrustDecision> {
   const authContext = input.authContext ?? LOCAL_AUTH_CONTEXT;
-  if (authContext.transport !== "loopback") return false;
+  if (authContext.transport !== "loopback") {
+    return { trusted: false, workspace: undefined };
+  }
   const resolver: WorkspaceConfigResolver | undefined =
     services.workspaceConfig;
-  if (resolver === undefined) return input.trustWorkspaceInstructions === true;
   const workspace = await workspaceForTrust(input, authContext, services);
-  if (workspace === undefined) return false;
-  return resolver.resolve(workspace).trustInstructions === true;
+  if (workspace === undefined) return { trusted: false, workspace: undefined };
+  if (resolver === undefined) {
+    return {
+      trusted: input.trustWorkspaceInstructions === true,
+      workspace,
+    };
+  }
+  return {
+    trusted: resolver.resolve(workspace).trustInstructions === true,
+    workspace,
+  };
 }

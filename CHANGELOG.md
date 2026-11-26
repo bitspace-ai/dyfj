@@ -1042,6 +1042,18 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
+- **Instruction trust binds to the workspace a Codex turn actually launches in
+  (`BIT-982`).** Route resolution answers the trust question before the paid
+  preflight runs, and the launch happens after it, so anything that moved the
+  path in between - a symlink swapped while the operator sat at the approval
+  prompt - could let a decision made about a trusted directory stand for a
+  directory whose profile declines. The route-time decision now names the
+  canonical workspace it was made for, the ACP runtime re-checks that decision
+  against the workspace it finally resolves, before it binds tools or starts
+  the agent, and a decision about a different directory is refused rather than
+  reused. A workspace that cannot be canonicalized as a directory is never
+  elevated.
+
 - **Workspace profiles apply on the Codex route too (`BIT-982`).** A turn's
   workspace profile is now resolved before the ACP route's instruction-trust
   check, so the Codex ChatGPT route and the native route reach the same

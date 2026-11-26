@@ -71,14 +71,26 @@ export async function runWorkbenchRuntime(
   const workspaceTrust = await resolveWorkspaceTrust(runtimeInput, services);
   const route = await resolveRoute({
     ...runtimeInput,
-    trustWorkspaceInstructions: workspaceTrust,
+    trustWorkspaceInstructions: workspaceTrust.trusted,
   }, services.store.models).catch(
     (error) => explainSessionModelFailure(runtimeInput, error),
   );
   if (route.runner === "acp") {
     return await requireExternalAgentRunner(services).run({
       ...runtimeInput,
-      trustWorkspaceInstructions: workspaceTrust,
+      trustWorkspaceInstructions: workspaceTrust.trusted,
+      // The runner re-checks this against the workspace it finally resolves:
+      // the path can change between here and the launch (a symlink swapped
+      // while the paid preflight was on screen), and a decision made about one
+      // directory must never stand for another.
+      ...(workspaceTrust.workspace === undefined
+        ? {}
+        : {
+          workspaceTrust: {
+            trusted: workspaceTrust.trusted,
+            workspace: workspaceTrust.workspace,
+          },
+        }),
       routingOptions: route.routingOptions,
       runner: route.selection,
     });
