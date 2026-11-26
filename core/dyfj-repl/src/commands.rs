@@ -862,10 +862,9 @@ async fn fast_toggle(client: &Client, session: &mut Session, target: Option<bool
 }
 
 /// `/steps` shows the session's tool-step limit; `/steps N` sets it for the
-/// rest of the session, as a hard cap: the turn stops there whatever its
-/// progress. A value above the runtime's ceiling is refused and the limit stays
-/// as it was. The runtime checks every turn again, because its ceiling can
-/// change when it restarts.
+/// rest of the session as a hard cap: the turn stops there whatever its
+/// progress. A value above the runtime's ceiling is refused and the limit
+/// stays as it was. The runtime checks every turn again on restart.
 async fn steps(client: &Client, session: &mut Session, target: Option<u32>) {
     let status = match client.request("runtime/status", json!({})).await {
         Ok(status) => status,
