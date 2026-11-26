@@ -9,7 +9,11 @@
  */
 import { sanitizeBoundaryText } from "../kernel/mod.ts";
 import { classifyErrorKind } from "./errors.ts";
-import type { StepStopReason } from "./step-budget.ts";
+import {
+  STALL_STEPS,
+  type StepStopFacts,
+  type StepStopReason,
+} from "./step-budget.ts";
 import type { RecentToolCall } from "./turn-state.ts";
 
 /** The handoff call's output cap; the catalog cap applies when it is lower. */
@@ -46,23 +50,34 @@ export function handoffInstruction(reasonText: string): string {
  * reached a limit it could not pass says so; a turn the step budget stopped
  * early says what actually happened, because a stall at 3 of 12 steps is not a
  * limit being reached and a handoff written as if it were misleads the next
- * prompt.
+ * prompt. The step named is the one the turn stopped at, never the limit it was
+ * running under: a stall stops a turn short of that limit.
  */
-export function toolUseEndedText(
-  reason: StepStopReason | undefined,
-  limit: number,
-): string {
-  switch (reason) {
+export function toolUseEndedText(facts: StepStopFacts): string {
+  switch (facts.reason) {
     case "stall":
-      return "this turn stopped making progress: two consecutive tool steps " +
-        "added nothing new, so tool use ended at " + `${limit} steps`;
+      return "this turn stopped making progress: " +
+        `${stallStreakText(facts)}, so tool use ended at ${facts.step} steps`;
     case "ceiling":
-      return `this turn reached its ${limit}-step safety ceiling`;
+      return `this turn reached its ${facts.limit}-step safety ceiling`;
     case "budget":
       return "this turn's spend limits left no room for another tool call";
     default:
-      return `this turn reached its ${limit}-step tool limit`;
+      return `this turn reached its ${facts.limit}-step tool limit`;
   }
+}
+
+/**
+ * The stall streak that ended tool use. A single unproductive step at the
+ * limit ends the turn too, because there is no chunk left to extend, so the
+ * text may not claim two steps every time.
+ */
+function stallStreakText(facts: StepStopFacts): string {
+  if (facts.stalled >= STALL_STEPS) {
+    return `${facts.stalled} consecutive tool steps added nothing new`;
+  }
+  return `one tool step added nothing new, with the turn already at its ` +
+    `${facts.limit}-step limit`;
 }
 
 /** Whether tool use ended because the step budget stopped the turn. */
@@ -83,7 +98,7 @@ export function forcedConclusionSystemPrompt(
     | "limit"
     | "repeated_tool_calls"
     | "approval_denied",
-  maxToolSteps: number,
+  facts: StepStopFacts,
 ): string {
   if (
     reason === "limit" || reason === "stall" || reason === "ceiling" ||
@@ -91,7 +106,9 @@ export function forcedConclusionSystemPrompt(
   ) {
     return handoffSystemPrompt(
       baseSystemPrompt,
-      toolUseEndedText(reason === "limit" ? undefined : reason, maxToolSteps),
+      toolUseEndedText(
+        reason === "limit" ? { ...facts, reason: undefined } : facts,
+      ),
     );
   }
   const reasonText = reason === "approval_denied"
@@ -102,29 +119,18 @@ export function forcedConclusionSystemPrompt(
     "from the transcript above. Do not request or call more tools.";
 }
 
-/** The handoff request as the turn's last user message. */
-export function handoffRequest(
-  maxToolSteps: number,
-  reason?: StepStopReason,
-): {
+/**
+ * The handoff request as the turn's last user message: the step the turn
+ * stopped at, and what stopped it.
+ */
+export function handoffRequest(facts: StepStopFacts): {
   role: "user";
   content: string;
 } {
   return {
     role: "user",
-    content: handoffInstruction(toolUseEndedText(reason, maxToolSteps)),
+    content: handoffInstruction(toolUseEndedText(facts)),
   };
-}
-
-/**
- * The handoff request for a turn the step budget ended: the same instruction,
- * naming the limit the turn actually ran under and what stopped it.
- */
-export function budgetHandoffRequest(budget: {
-  effectiveLimit: number;
-  stopReason: StepStopReason | undefined;
-}): { role: "user"; content: string } {
-  return handoffRequest(budget.effectiveLimit, budget.stopReason);
 }
 
 const HANDOFF_LABELS = ["done", "next", "uncommitted state"] as const;
@@ -153,19 +159,17 @@ export function hasHandoffLabels(text: string): boolean {
 }
 
 /**
- * The runtime's notice when the handoff call fails: the limit, the failure's
- * class, and the turn's last tool calls by command and outcome. It carries no
- * tool arguments, no results and no model text.
+ * The runtime's notice when the handoff call fails: the step the turn stopped
+ * at, the failure's class, and the turn's last tool calls by command and
+ * outcome. It carries no tool arguments, no results and no model text.
  */
 export function stepLimitNotice(
-  toolSteps: number,
-  maxToolSteps: number,
+  facts: StepStopFacts,
   failure: unknown,
   calls: readonly RecentToolCall[],
-  reason?: StepStopReason,
 ): string {
   const lines = [
-    `${stepLimitNoticeLead(toolSteps, maxToolSteps, reason)} The handoff ` +
+    `${stepLimitNoticeLead(facts)} The handoff ` +
     `call did not produce a handoff (${summarizeErrorClass(failure)}), so ` +
     "this notice lists the turn's last tool calls instead.",
     "",
@@ -184,21 +188,17 @@ export function stepLimitNotice(
  * turn the step budget stopped names what stopped it, at the step count it
  * stopped at.
  */
-function stepLimitNoticeLead(
-  toolSteps: number,
-  maxToolSteps: number,
-  reason: StepStopReason | undefined,
-): string {
-  switch (reason) {
+function stepLimitNoticeLead(facts: StepStopFacts): string {
+  const at = `${facts.step}/${facts.limit}`;
+  switch (facts.reason) {
     case "stall":
-      return `Tool use stopped at ${toolSteps}/${maxToolSteps} steps: two ` +
-        "consecutive steps added nothing new.";
+      return `Tool use stopped at ${at} steps: ${stallStreakText(facts)}.`;
     case "ceiling":
-      return `Tool-step ceiling reached (${toolSteps}/${maxToolSteps}).`;
+      return `Tool-step ceiling reached (${at}).`;
     case "budget":
-      return `Spend limits stopped tool use at ${toolSteps}/${maxToolSteps} steps.`;
+      return `Spend limits stopped tool use at ${at} steps.`;
     default:
-      return `Tool-step limit reached (${toolSteps}/${maxToolSteps}).`;
+      return `Tool-step limit reached (${at}).`;
   }
 }
 

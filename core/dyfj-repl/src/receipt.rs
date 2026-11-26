@@ -476,6 +476,41 @@ mod tests {
         assert!(line(&r, 0.0).contains("tools 2/2 (limit reached) ·"));
     }
 
+    /// BIT-992 N3: a turn the step budget stopped names what stopped it, in
+    /// the same parenthetical as the soft limit, and does not claim a limit was
+    /// reached — a stall at 41 of 48 reached no limit. The handoff marker folds
+    /// into that parenthetical rather than becoming a second group.
+    #[test]
+    fn names_what_stopped_a_turn_short_of_its_limit() {
+        let mut r = receipt();
+        r["agent"] = json!({"toolStepsUsed": 41, "maxToolSteps": 48, "softToolSteps": 32,
+            "limitReached": true, "handoff": "model", "stepStopReason": "stall"});
+        let rendered = line(&r, 0.0);
+        assert!(
+            rendered.contains("tools 41/48 (soft 32, stopped: stall, handoff)"),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("limit reached"), "{rendered}");
+        // One parenthetical, not two.
+        assert_eq!(rendered.matches('(').count(), 1, "{rendered}");
+        r["agent"]["handoff"] = json!("notice");
+        let failed = line(&r, 0.0);
+        assert!(
+            failed.contains("tools 41/48 (soft 32, stopped: stall, handoff failed)"),
+            "{failed}"
+        );
+        assert!(!failed.contains("limit reached"), "{failed}");
+        // A ceiling stop reads the same way, naming the ceiling it reached.
+        r["agent"]["stepStopReason"] = json!("ceiling");
+        r["agent"]["toolStepsUsed"] = json!(48);
+        let ceiling = line(&r, 0.0);
+        assert!(
+            ceiling.contains("tools 48/48 (soft 32, stopped: ceiling, handoff failed)"),
+            "{ceiling}"
+        );
+        assert!(!ceiling.contains("limit reached"), "{ceiling}");
+    }
+
     /// BIT-707: calls that ran without a prompt are counted beside the tools.
     #[test]
     fn counts_auto_approved_calls_when_there_were_any() {

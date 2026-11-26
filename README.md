@@ -474,9 +474,11 @@ not fail, or a successful write or edit — lets the turn extend its limit by ha
 the soft limit, once it has reached that limit, never past the ceiling in
 `[agent].max_tool_steps_ceiling` (`DYFJ_MAX_TOOL_STEPS_CEILING`, default 128). A
 step that made no progress extends nothing: it counts toward a stall streak, and
-two in a row stop the turn there instead of burning the rest of its budget. A
-turn whose turn or runaway spend is already used stops before extending, because
-the next call would be refused anyway. Extension is on by default;
+two in a row stop the turn there instead of burning the rest of its budget. At
+the current limit a single unproductive step ends the turn too, because there is
+no chunk left to spend on the next one. A turn whose turn or runaway spend is
+already used stops before extending, because the next call would be refused
+anyway. Extension is on by default;
 `[agent] step_extension = false` (`DYFJ_STEP_EXTENSION`) restores the fixed
 limit exactly: no extension, no `step_budget` event, and the receipt and posture
 line it always printed.
@@ -4055,3 +4057,6 @@ Document revisions only. Code and behavior changes are tracked in
   without progress never extends, that an explicit `--tool-steps N` /
   `/steps N` is a hard cap, and that a turn the budget stopped is named for what
   stopped it rather than as a limit reached.
+- 2026-11-26 - Document that at the current limit a single unproductive step
+  ends the turn, not only two in a row, and that a stop names the step the turn
+  stopped at rather than the limit it was running under.

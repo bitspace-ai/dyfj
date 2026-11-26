@@ -67,6 +67,22 @@ export interface StepOutcome {
   runawayStallUsd: number;
 }
 
+/**
+ * A stop as the model and the operator read it: the step the turn stopped at
+ * (never the limit it was running under, which a stall stops short of), that
+ * limit, the stall streak that ended the turn, and why it ended.
+ */
+export interface StepStopFacts {
+  /** The step the turn stopped at, counting from 1. */
+  step: number;
+  /** The step limit the turn was running under. */
+  limit: number;
+  /** Consecutive unproductive steps; meaningful for a stall. */
+  stalled: number;
+  /** Why tool use ended, or undefined for a limit the turn simply reached. */
+  reason: StepStopReason | undefined;
+}
+
 /** What the budget decided after a step. */
 export type StepDecision =
   | { kind: "continue" }
@@ -121,6 +137,19 @@ export class StepBudget {
   /** Whether another tool step may start after `steps` completed ones. */
   allowsAnotherStep(steps: number): boolean {
     return !this.stopped && steps < this.#effectiveLimit;
+  }
+
+  /**
+   * The stop the turn made, at `step`, as the handoff and the notice read it.
+   * Read after the stop, so `reason` is the one that ended tool use.
+   */
+  stopFacts(step: number): StepStopFacts {
+    return {
+      step,
+      limit: this.#effectiveLimit,
+      stalled: this.#stalledSteps,
+      reason: this.#stopReason,
+    };
   }
 
   /** Whether the step just run reached the budget, so tool use ends here. */

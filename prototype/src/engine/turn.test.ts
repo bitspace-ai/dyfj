@@ -493,6 +493,44 @@ test("executeTurn binds boundary config and the transport's paid verdict", async
   assert.deepStrictEqual(lines, [formatTurnSummaryLine(RESULT)]);
 });
 
+// BIT-992: a request's own `maxToolSteps` is the operator's number, so the
+// runtime input must carry `toolStepsOverride: true` — that flag is what makes
+// `openSession` turn progress-based extension off and keep the value a hard
+// cap. `false` here would silently re-enable extension on an explicit limit.
+test("a request with maxToolSteps reaches the runtime input as an override", async () => {
+  let captured: WorkbenchRuntimeInput | undefined;
+  const { value } = await captureStderr(() =>
+    executeTurn(
+      resolved({ prompt: "hi", sessionId: SESSION_ID, maxToolSteps: 64 }),
+      deps({
+        runRuntime: (input) => {
+          captured = input;
+          return Promise.resolve(RESULT);
+        },
+      }),
+    )
+  );
+  assert.strictEqual(value.sessionId, SESSION_ID);
+  assert.strictEqual(captured?.maxToolSteps, 64);
+  assert.strictEqual(captured?.toolStepsOverride, true);
+});
+
+test("a turn with no maxToolSteps leaves the override unset", async () => {
+  let captured: WorkbenchRuntimeInput | undefined;
+  await captureStderr(() =>
+    executeTurn(
+      resolved({ prompt: "hi", sessionId: SESSION_ID }),
+      deps({
+        runRuntime: (input) => {
+          captured = input;
+          return Promise.resolve(RESULT);
+        },
+      }),
+    )
+  );
+  assert.strictEqual(captured?.toolStepsOverride, undefined);
+});
+
 test("executeTurn threads operatorInstructions only on loopback turns and engineConfigToTurnDeps maps it", async () => {
   const mapped = engineConfigToTurnDeps({
     defaultCompanionModel: null,

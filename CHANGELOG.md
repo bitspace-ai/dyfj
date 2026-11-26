@@ -23,11 +23,13 @@ README are tracked separately in its Revision history section.
   `[agent] max_tool_steps_ceiling` (`DYFJ_MAX_TOOL_STEPS_CEILING`, default 128).
   A step that made no progress extends nothing: it counts toward a stall
   streak, and two in a row stop the turn there instead of burning the rest of
-  its budget. A turn whose turn or runaway spend is already used stops before
-  extending, because the next provider call would be refused anyway. Extension
-  is on by default and `[agent] step_extension = false` (`DYFJ_STEP_EXTENSION`)
-  restores the previous fixed-limit behaviour exactly: no extension, no
-  `step_budget` event, and the receipt and posture line the turn always printed.
+  its budget; at the current limit a single unproductive step also ends the
+  turn, since there is no chunk left to extend. A turn whose turn or runaway
+  spend is already used stops before extending, because the next provider call
+  would be refused anyway. Extension is on by default and
+  `[agent] step_extension = false` (`DYFJ_STEP_EXTENSION`) restores the previous
+  fixed-limit behaviour exactly: no extension, no `step_budget` event, and the
+  receipt and posture line the turn always printed.
   Explicit values keep their meaning and their fail-closed validation: a value
   above the ceiling is still refused rather than clamped, a remote caller still
   cannot raise the limit, and the ceiling still bounds any extension. Each

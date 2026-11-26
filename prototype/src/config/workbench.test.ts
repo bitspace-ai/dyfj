@@ -397,7 +397,7 @@ const table = (t: Record<string, unknown>) => () => t;
     }
   });
 
-  test("loadConfig agent tool-step ceiling: defaults to 64; TOML and env layers override it with env precedence", async () => {
+  test("loadConfig agent tool-step ceiling: defaults to 128; TOML and env layers override it with env precedence", async () => {
     const cfg = await loadConfig({ env: env(HOME), readTextFile: notFound });
     assert.strictEqual(cfg.maxToolStepsCeiling, 128);
     const fileCfg = await loadConfig({

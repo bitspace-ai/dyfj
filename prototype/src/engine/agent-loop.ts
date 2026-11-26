@@ -48,10 +48,10 @@ import {
 import { writeMaybe } from "./event-writes.ts";
 import { writeStepBudgetEvent, stepBudgetRecord } from "./step-budget-events.ts";
 import {
-  budgetHandoffRequest,
   forcedConclusionSystemPrompt,
   HANDOFF_NOTICE_CALLS,
   HANDOFF_OUTPUT_TOKENS,
+  handoffRequest,
   hasHandoffLabels,
   stepLimitNotice,
 } from "./step-limit-handoff.ts";
@@ -452,7 +452,10 @@ async function runToolStep(
     return estimateRequest(turn, {
       systemPrompt: next.systemPrompt,
       messages: next.atCap
-        ? [...sized, budgetHandoffRequest(state.stepBudget)]
+        ? [
+          ...sized,
+          handoffRequest(state.stepBudget.stopFacts(state.toolSteps)),
+        ]
         : sized,
       tools: next.tools,
     });
@@ -813,7 +816,9 @@ async function stepLimitHandoff(
   // The request itself is the last thing the model reads, after the last
   // tool result; the system prompt carries it too, for the adapter that sends
   // no transcript.
-  messages.push(budgetHandoffRequest(state.stepBudget));
+  messages.push(
+    handoffRequest(state.stepBudget.stopFacts(state.toolSteps)),
+  );
   try {
     await fitRequest(turn, { systemPrompt, messages, tools: undefined }, "before_send");
     const estimatedInputCount = estimateRuntimeInputCount(
@@ -872,11 +877,9 @@ async function stepLimitHandoff(
   return {
     ...(handoff ?? lastStep),
     text: stepLimitNotice(
-      state.toolSteps,
-      state.stepBudget.effectiveLimit,
+      state.stepBudget.stopFacts(state.toolSteps),
       failure,
       state.recentToolCalls,
-      state.stepBudget.stopReason,
     ),
     stopReason: "stop",
     toolCalls: undefined,
@@ -971,7 +974,10 @@ function nextRequestShape(
           : approvalDenied
           ? "approval_denied"
           : "repeated_tool_calls",
-        state.stepBudget.effectiveLimit,
+        // The step the turn stopped at, not the limit it ran under: a stall
+        // ends the turn short of its limit, and the model must not be told
+        // it reached a step it never took.
+        state.stepBudget.stopFacts(state.toolSteps),
       )
       : state.systemPrompt,
     tools: forceConclude ? undefined : state.commandTools,

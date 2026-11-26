@@ -327,6 +327,75 @@ test("the receipt names a stall stop in one parenthetical, without claiming a li
   assert.strictEqual(line.split("(").length, 2, line);
 });
 
+test("a stall handoff names the step the turn stopped at, not its limit", async () => {
+  // Soft 4, ceiling 12: steps 1-3 make progress, step 4 is unproductive and
+  // arrives at the limit with nothing to extend, so the turn ends at 4 of 4.
+  // The handoff must say 4, and must say one unproductive step ended the turn.
+  const steps = [
+    ...Array.from({ length: 3 }, (_, index) => productiveStep(index)),
+    ...Array.from({ length: 3 }, (_, index) =>
+      toolReply([{
+        id: `x${index}`,
+        name: "read_file",
+        arguments: { path: `missing-${index}.md` },
+      }])
+    ),
+  ];
+  const { run, result, error } = await loopTurn(steps, {
+    prompt: "stall at the limit",
+    maxToolSteps: 4,
+    maxToolStepsCeiling: 12,
+  });
+  assert.strictEqual(error, null);
+  assert.strictEqual(result?.agent.toolStepsUsed, 4);
+  assert.strictEqual(result?.agent.stepStopReason, "stall");
+  const handoff = JSON.stringify(run.transport.requests.at(-1)?.body);
+  assert.ok(
+    handoff.includes("tool use ended at 4 steps"),
+    `expected the handoff to name step 4, got ${handoff}`,
+  );
+  assert.ok(
+    handoff.includes("one tool step added nothing new"),
+    `expected the streak-1 wording, got ${handoff}`,
+  );
+  assert.strictEqual(handoff.includes("consecutive"), false, handoff);
+});
+
+test("a two-step stall handoff names the step it stopped at, not the limit", async () => {
+  // Soft 8, ceiling 32: eight productive steps extend the limit to 12, and two
+  // unproductive steps then end the turn at 10 — inside a chunk that runs to
+  // 12. The handoff must name step 10 and may not claim a 12-step limit.
+  const steps = [
+    ...Array.from({ length: 8 }, (_, index) => productiveStep(index)),
+    ...Array.from({ length: 4 }, (_, index) =>
+      toolReply([{
+        id: `x${index}`,
+        name: "read_file",
+        arguments: { path: `missing-${index}.md` },
+      }])
+    ),
+  ];
+  const { run, result, error } = await loopTurn(steps, {
+    prompt: "stall mid-chunk",
+    maxToolSteps: 8,
+    maxToolStepsCeiling: 32,
+  });
+  assert.strictEqual(error, null);
+  assert.strictEqual(result?.agent.toolStepsUsed, 10);
+  assert.strictEqual(result?.agent.maxToolSteps, 12);
+  assert.strictEqual(result?.agent.stepStopReason, "stall");
+  const handoff = JSON.stringify(run.transport.requests.at(-1)?.body);
+  assert.ok(
+    handoff.includes("tool use ended at 10 steps"),
+    `expected the handoff to name step 10, got ${handoff}`,
+  );
+  assert.ok(
+    handoff.includes("2 consecutive tool steps added nothing new"),
+    `expected the streak-2 wording, got ${handoff}`,
+  );
+  assert.strictEqual(handoff.includes("12 steps"), false, handoff);
+});
+
 test("the receipt reports the effective step policy", async () => {
   const steps = Array.from({ length: 8 }, (_, index) => productiveStep(index));
   const { result } = await loopTurn(steps, {
