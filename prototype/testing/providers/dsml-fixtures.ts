@@ -194,6 +194,30 @@ export function dsmlTruncatedBlockWithNestedQwen(command: string): string {
     `cat > f <<X\n${qwenBashBlock(command)}\nmore`;
 }
 
+/**
+ * A closed wrapper whose body is not a DSML block: its `parameter` carries no
+ * `name` attribute, so the block names the offered `bash` but cannot be read.
+ * The body holds a *complete* Qwen block, the shape a model leaves when it
+ * writes a heredoc that embeds a Qwen fixture and then closes its own markup.
+ *
+ * A reader withholds this block because its first invoke names an offered tool,
+ * then finds on the wrapper's close tag that the block is not valid DSML. What
+ * it releases must still not show the Qwen call's markup, because recovery runs
+ * that call.
+ */
+export function dsmlClosedMalformedBlockWithNestedQwen(command: string): string {
+  return `${dsmlTag("spaced", "calls")}\n` +
+    `${dsmlTag("spaced", "invoke", ' name="bash"')}\n` +
+    `${dsmlTag("spaced", "parameter", ' string="true"')}` +
+    `${qwenBashBlock(command)}` +
+    `${dsmlCloseTag("spaced", "parameter")}\n` +
+    `${dsmlCloseTag("spaced", "invoke")}\n` +
+    `${dsmlCloseTag("spaced", "calls")}`;
+}
+
+/** The separator-wrapped run one DSML tag carries, as prose may quote it. */
+export const DSML_MARKER = `${DSML_PIPE}DSML${DSML_PIPE}`;
+
 /** Prose to place before a block in a mixed reply. */
 export const DSML_PROSE = "Let me check that.";
 

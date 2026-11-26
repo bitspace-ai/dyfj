@@ -31,7 +31,7 @@ import {
   TEXT_PARAMETER_MARKER,
 } from "../shared/text-tool-calls.ts";
 import {
-  DSML_MARKER_COUNT,
+  DSML_MARKER_COUNTS,
   dsmlBlockEnd,
   dsmlPartialOpeningStart,
   dsmlWrapperClosingEnd,
@@ -307,11 +307,11 @@ function createMarkupCandidateCounter(limit: number) {
     get exceeded(): boolean {
       return count > limit;
     },
-    observe(delta: string, marker: string): void {
+    observe(delta: string, markers: readonly string[]): void {
       const update = countNewTextToolMarkupCandidates(
         tail,
         delta,
-        marker,
+        markers,
         limit - count,
       );
       tail = update.tail;
@@ -459,7 +459,12 @@ function createTextPresenter(
     suppressing = undefined;
     withheldClose.reset();
   };
-  /** Emit the withheld span, or hide it once recovery confirms it runs. */
+  /**
+   * Emit the withheld span, or hide it once recovery confirms it runs. A span
+   * that holds a recoverable call is not shown raw: what reaches the operator
+   * is the span with those calls removed, so a call nested in markup the reader
+   * was withholding cannot be both executed and displayed.
+   */
   const settleWithheld = (end: number) => {
     const candidate = pending().slice(0, end);
     const extraction = extractTextToolCallsInternal(
@@ -467,10 +472,13 @@ function createTextPresenter(
       offeredNames,
       true,
     );
-    if (extraction.unrecoverable || extraction.toolCalls.length === 0) {
+    if (extraction.unrecoverable) {
       emitTextDelta(candidate);
-    } else {
+    } else if (extraction.toolCalls.length > 0) {
       sawTextToolMarkup = true;
+      emitTextDelta(extraction.cleaned);
+    } else {
+      emitTextDelta(candidate);
     }
     endWithholding();
     dropPendingPrefix(end);
@@ -499,10 +507,11 @@ function createTextPresenter(
           // The wrapper closed around something that is not a DSML block, so
           // that markup is prose after all. Release it only as far as its own
           // close tag, then read on: a recoverable block may follow in the
-          // same text, and it must not be released with the prose.
-          const proseEnd = withheldClosingEnd();
-          endWithholding();
-          release(proseEnd);
+          // same text, and it must not be released with the prose. The span is
+          // settled rather than released, because the prose it wraps can hold a
+          // complete Qwen call, which recovery runs and whose markup must not
+          // also be shown.
+          settleWithheld(withheldClosingEnd());
           continue;
         }
         settleWithheld(end);
@@ -545,9 +554,9 @@ function createTextPresenter(
     },
     append(delta: string): void {
       if (!textToolRecoveryDisabled) {
-        functionCandidates.observe(delta, TEXT_FUNCTION_MARKER);
-        parameterCandidates.observe(delta, TEXT_PARAMETER_MARKER);
-        dsmlCandidates.observe(delta, DSML_MARKER_COUNT);
+        functionCandidates.observe(delta, [TEXT_FUNCTION_MARKER]);
+        parameterCandidates.observe(delta, [TEXT_PARAMETER_MARKER]);
+        dsmlCandidates.observe(delta, DSML_MARKER_COUNTS);
       }
       text += delta;
       appendPending(delta);

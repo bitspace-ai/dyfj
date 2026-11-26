@@ -17,16 +17,13 @@ import type {
 } from "../types.ts";
 import {
   countUnparsedDsmlMarkup,
-  DSML_MARKER_COUNT,
+  DSML_MARKER_COUNTS,
   dsmlPossibleStart,
   dsmlRecoverableStart,
   dsmlTruncatedBlockStart,
   extractDsmlToolCalls,
 } from "./dsml-tool-calls.ts";
-import {
-  coerceToolArgument,
-  toolArgumentWithinBudget,
-} from "./text-markup-arguments.ts";
+import { coerceToolArgument } from "./text-markup-arguments.ts";
 import {
   MAX_DSML_MARKUP_TOKENS,
   MAX_TEXT_TOOL_MARKUP_CANDIDATES,
@@ -229,6 +226,30 @@ function exceedsTextToolMarkupCandidateLimit(
   }
 }
 
+/**
+ * Whether the text holds more than `limit` occurrences of the markers taken
+ * together. Markers are separate spellings of one construct, so they share one
+ * budget; none is a prefix of another, so no occurrence is counted twice.
+ */
+function exceedsTextToolMarkupCandidateLimitsFor(
+  text: string,
+  markers: readonly string[],
+  limit: number,
+): boolean {
+  let count = 0;
+  for (const marker of markers) {
+    let searchFrom = 0;
+    for (;;) {
+      const found = text.indexOf(marker, searchFrom);
+      if (found < 0) break;
+      count++;
+      if (count > limit) return true;
+      searchFrom = found + marker.length;
+    }
+  }
+  return false;
+}
+
 function exceedsTextToolMarkupCandidateLimits(text: string): boolean {
   return exceedsTextToolMarkupCandidateLimit(
     text,
@@ -240,32 +261,42 @@ function exceedsTextToolMarkupCandidateLimits(text: string): boolean {
       TEXT_PARAMETER_MARKER,
       MAX_TEXT_TOOL_MARKUP_CANDIDATES,
     ) ||
-    exceedsTextToolMarkupCandidateLimit(
+    exceedsTextToolMarkupCandidateLimitsFor(
       text,
-      DSML_MARKER_COUNT,
+      DSML_MARKER_COUNTS,
       MAX_DSML_MARKUP_TOKENS,
     );
 }
 
+/**
+ * Count occurrences of any of `markers` in the delta, carrying the tail one may
+ * straddle. Several spellings of one construct share the count, so the tail is
+ * the longest marker's overlap rather than any single one's.
+ */
 export function countNewTextToolMarkupCandidates(
   tail: string,
   delta: string,
-  marker: string,
+  markers: readonly string[],
   remaining: number,
 ): { count: number; tail: string } {
   const combined = tail + delta;
   let count = 0;
-  let searchFrom = 0;
-  for (;;) {
-    const found = combined.indexOf(marker, searchFrom);
-    if (found < 0) break;
-    count++;
+  let longest = 1;
+  for (const marker of markers) {
+    longest = Math.max(longest, marker.length);
+    let searchFrom = 0;
+    for (;;) {
+      const found = combined.indexOf(marker, searchFrom);
+      if (found < 0) break;
+      count++;
+      if (count > remaining) break;
+      searchFrom = found + marker.length;
+    }
     if (count > remaining) break;
-    searchFrom = found + marker.length;
   }
   return {
     count,
-    tail: combined.slice(-(marker.length - 1)),
+    tail: combined.slice(-(longest - 1)),
   };
 }
 
@@ -386,7 +417,12 @@ export function extractTextToolCallsInternal(
   }
   const qwen = qwenToolCallBlocks(text, offeredNames);
   const dsml = extractDsmlToolCalls(text, offeredNames);
-  const blocks = [...qwen.blocks, ...dsml.removals]
+  // A Qwen block whose arguments could not be read fails the whole Qwen
+  // reading closed: the caller gets no Qwen call and the Qwen markup stays in
+  // the text, so a reply that offered a call the reader could not type is
+  // never half-executed. The DSML dialect is read independently, so a block it
+  // can recover whole is still recovered.
+  const blocks = [...(qwen.unrecoverable ? [] : qwen.blocks), ...dsml.removals]
     .sort((a, b) => a.start - b.start);
   const unrecoverable = qwen.unrecoverable || dsml.unrecoverable;
   const kept: RecoveredTextBlock[] = [];

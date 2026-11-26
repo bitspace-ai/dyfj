@@ -37,30 +37,38 @@ README are tracked separately in its Revision history section.
   still withholding drops that block from the text instead of showing it. A
   block that closed but does not follow the dialect is prose: it is released
   only as far as its own close tag and the reader carries on, so a recoverable
-  block later in the same reply is still recovered rather than shown, and the
-  delivery never cuts text it already forwarded: the presenter and the finish
-  strip read one per-candidate decision, so only a block whose first invoke
-  names an offered tool, or one still undecided within its bound, is ever cut.
-  A markup opener a tokenizer splits across deltas is withheld too, including a
-  fragment as short as `<` and the separator run, and the prose after a
-  recovered block is forwarded as it arrives instead of waiting for the stream
-  to end. A block is only withheld while it may still turn out recoverable:
-  once a candidate block has grown past the bound a wrapper and its invoke tag
-  fit in, it is prose and the reader releases it, so markup-shaped text in
-  ordinary prose costs no more than that bound. Every scan stays linear and
-  bounded: the separator-wrapped marker count is capped at the same per-element
-  candidate limit as the Qwen dialect scaled to that dialect's tokens per
-  element, a withheld block's chunks are held in an array and only a carried
-  tail window plus the newly arrived characters is probed for the close tag, so
-  wall-clock time stays linear across tens of thousands of deltas, the block's
-  end is read once per block rather than once per delta, the presenter scans
-  only the text it has not decided yet rather than the whole reply at each
-  delta, and the whole-text scan keeps the accepted-response bound. The bounds,
-  the argument-budget helper and its coercion moved into
+  block later in the same reply is still recovered rather than shown, and that
+  released prose still has any complete call it holds removed before it is
+  shown, so a call nested in markup the reader was withholding is never both
+  run and displayed. The delivery never cuts text it already forwarded: the
+  presenter and the finish strip read one per-candidate decision, so only a
+  block whose first invoke names an offered tool, or one still undecided within
+  its bound, is ever cut. A markup opener a tokenizer splits across deltas is
+  withheld too, including a fragment as short as `<` and the separator run, and
+  the prose after a recovered block is forwarded as it arrives instead of
+  waiting for the stream to end. A block is only withheld while it may still
+  turn out recoverable: once a candidate block has grown past the bound a
+  wrapper and its invoke tag fit in, it is prose and the reader releases it, so
+  markup-shaped text in ordinary prose costs no more than that bound. Every
+  scan stays linear and bounded: the marker counted is the separator-wrapped
+  run that opens a tag, not the bare element name, so a reply that discusses
+  the dialect in prose spends none of the bound and only real tags do; that
+  count is capped at the same per-element candidate limit as the Qwen dialect
+  scaled to that dialect's tokens per element, a withheld block's chunks are
+  held in an array and only a carried tail window plus the newly arrived
+  characters is probed for the close tag, so wall-clock time stays linear
+  across tens of thousands of deltas, the block's end is read once per block
+  rather than once per delta, the presenter scans only the text it has not
+  decided yet rather than the whole reply at each delta, and the whole-text
+  scan keeps the accepted-response bound. The bounds, the argument-budget
+  helper and its coercion moved into
   `providers/shared/text-markup-bounds.ts` and
   `providers/shared/text-markup-arguments.ts` so no module in the recovery path
-  grows past the module-size limit. The Qwen `<tool_call>` recovery and
-  detection behavior is unchanged, pinned by its existing tests.
+  grows past the module-size limit. The Qwen `<tool_call>` reading keeps the
+  behavior it had before this dialect joined it, pinned by its existing tests:
+  an offered Qwen call whose arguments cannot be typed still fails that whole
+  reading closed, so no Qwen call from such a reply runs and its markup stays
+  in the text, while a DSML block read independently is still recovered.
 
 - **Progress-aware tool-step budget (`BIT-992`).** A native turn's tool steps
   were bounded by one fixed number, so a productive turn working through a repo

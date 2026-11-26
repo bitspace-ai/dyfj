@@ -4,6 +4,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  DSML_MARKER,
+  dsmlBlock,
+  dsmlTag,
+} from "../../../testing/providers/dsml-fixtures.ts";
+import {
   detectUnparsedToolCallMarkup,
   extractTextToolCalls,
   MAX_UNPARSED_TOOL_CALL_SCAN_CHARACTERS,
@@ -290,5 +295,99 @@ describe("detectUnparsedToolCallMarkup", () => {
       ),
       undefined,
     );
+  });
+});
+
+// The DSML dialect joined Qwen recovery in BIT-991. Two properties of the Qwen
+// reading predate it and must survive: an offered call whose arguments cannot
+// be typed fails the whole Qwen reading closed, and the marker bound is spent
+// on markup rather than on prose that merely names the dialect.
+// The DSML marker bound is spent on markup, not on prose that names the
+// dialect. A reply that merely discusses DSML must still have its real block
+// recovered, and a reply that holds separator-wrapped markers past the bound is
+// still refused rather than parsed.
+describe("DSML marker bound counts separator-wrapped runs", () => {
+  const mentions = (count: number) => `The ${"DSML"} marker. `.repeat(count);
+
+  it("recovers a DSML block after hundreds of prose mentions of DSML", () => {
+    const prose = mentions(513);
+    const text = `${prose}\n${dsmlBlock("spaced", "bash", [
+      ["command", ' string="true"', "ls"],
+    ])}`;
+    const { toolCalls, cleaned } = extractTextToolCalls(
+      text,
+      new Set(["bash"]),
+    );
+    assert.deepStrictEqual(toolCalls, [{
+      id: "text-tool-1",
+      name: "bash",
+      arguments: { command: "ls" },
+    }]);
+    // Recovery trims the retained text when whitespace is not preserved.
+    assert.strictEqual(cleaned, prose.trim());
+  });
+
+  it("refuses the text once separator-wrapped markers pass the bound", () => {
+    const markers = `${DSML_MARKER} `.repeat(513);
+    const text = `${markers}\n${dsmlBlock("spaced", "bash", [
+      ["command", ' string="true"', "ls"],
+    ])}`;
+    const { toolCalls, cleaned } = extractTextToolCalls(
+      text,
+      new Set(["bash"]),
+    );
+    assert.deepStrictEqual(toolCalls, []);
+    assert.strictEqual(cleaned, text);
+  });
+
+  it("caps the unparsed DSML count and says the count is a lower bound", () => {
+    const block = dsmlBlock("spaced", "bash", [
+      ["command", ' string="true"', "ls"],
+    ]);
+    assert.deepStrictEqual(
+      detectUnparsedToolCallMarkup(block.repeat(65)),
+      { count: 64, countIsLowerBound: true },
+    );
+    // The candidate bound can stop the scan with markup still unread while the
+    // count itself stays small: the count is short of the truth either way.
+    const stray = dsmlTag("spaced", "parameter", ' name="x"');
+    const early = `${block}${stray.repeat(64)}${block}`;
+    assert.deepStrictEqual(detectUnparsedToolCallMarkup(early), {
+      count: 1,
+      countIsLowerBound: true,
+    });
+  });
+});
+
+describe("Qwen recovery stays fail-closed beside DSML", () => {
+  const offered = new Set(["bash", "list_files"]);
+
+  it("runs no Qwen call when a second offered call's arguments are unrecoverable", () => {
+    const valid = "<tool_call><function=list_files>" +
+      "<parameter=path>.</parameter></function></tool_call>";
+    // 65 nested arrays: past the canonical-JSON depth budget, so the value
+    // cannot be typed and the call is unrecoverable rather than guessed at.
+    const unrecoverable = "<tool_call><function=bash><parameter=command>" +
+      `${"[".repeat(65)}</parameter></function></tool_call>`;
+    const text = `${valid}\n${unrecoverable}`;
+    const { toolCalls, cleaned } = extractTextToolCalls(text, offered);
+    assert.deepStrictEqual(toolCalls, []);
+    assert.strictEqual(cleaned, text);
+  });
+
+  it("still runs a DSML block recovery can read beside an unrecoverable Qwen call", () => {
+    const unrecoverable = "<tool_call><function=bash><parameter=command>" +
+      `${"[".repeat(65)}</parameter></function></tool_call>`;
+    const block = dsmlBlock("spaced", "list_files", [
+      ["path", ' string="true"', "."],
+    ]);
+    const text = `${unrecoverable}\n${block}`;
+    const { toolCalls, cleaned } = extractTextToolCalls(text, offered);
+    assert.deepStrictEqual(toolCalls, [{
+      id: "text-tool-1",
+      name: "list_files",
+      arguments: { path: "." },
+    }]);
+    assert.strictEqual(cleaned, unrecoverable);
   });
 });

@@ -40,11 +40,19 @@ const DSML_FULLWIDTH_PIPE = "\uFF5C";
 /** The separator spellings an upstream may emit. */
 const DSML_SEPARATORS = [DSML_FULLWIDTH_PIPE, "|"] as const;
 
+/** The element-name run every DSML tag carries between its separators. */
+const DSML_MARKER = "DSML";
+
 /**
- * The run that marks a DSML tag, counted to bound markup scanning. Either
- * separator spelling holds it, so one counter covers both.
+ * The separator-wrapped runs that mark a DSML tag, one per separator spelling,
+ * counted to bound markup scanning. A marker is the separator, `DSML`, the
+ * separator again: counting that run rather than a bare `DSML` keeps ordinary
+ * prose about the dialect from spending the bound, and counting both spellings
+ * keeps one counter over every tag shape.
  */
-export const DSML_MARKER_COUNT = "DSML";
+export const DSML_MARKER_COUNTS: readonly string[] = DSML_SEPARATORS.map(
+  (separator) => `${separator}${DSML_MARKER}${separator}`,
+);
 
 /** Element names DSML uses. A tag with any other name is not DSML markup. */
 const DSML_TAG_NAMES = new Set([
@@ -78,7 +86,7 @@ const MAX_DSML_SEPARATOR_LENGTH = Math.max(
  * in the characters that arrived rather than in the withheld length.
  */
 export const MAX_DSML_CLOSING_TAG_LENGTH = "</".length +
-  MAX_DSML_SEPARATOR_LENGTH + DSML_MARKER_COUNT.length +
+  MAX_DSML_SEPARATOR_LENGTH + DSML_MARKER.length +
   MAX_DSML_SEPARATOR_LENGTH + (2 * MAX_TEXT_TOOL_WRAPPER_WHITESPACE) +
   Math.max(...[...DSML_TAG_NAMES].map((name) => name.length)) + ">".length;
 
@@ -833,9 +841,9 @@ function couldBecomeWrapper(partial: DsmlTagPrefix): boolean {
 /**
  * Count the DSML blocks left in the text that ran no tool. A whole block counts
  * once. A block the text cuts off counts only when it shows DSML structure past
- * its opening, so a stray wrapper opening in prose stays prose. Blocks past the
- * scan bound are not counted; the reported count is capped, and says whether it
- * is a lower bound.
+ * its opening, so a stray wrapper opening in prose stays prose. Scanning stops
+ * at the candidate bound; when it does, blocks may remain unread, so the
+ * reported count is a lower bound and says so.
  */
 export function countUnparsedDsmlMarkup(
   text: string,
@@ -865,8 +873,10 @@ export function countUnparsedDsmlMarkup(
     at = nextDsmlTagStart(text, at + 1);
   }
   if (count === 0) return none;
+  // Either the reported count was capped, or the candidate bound stopped the
+  // scan with markup still unread: both leave the count short of the truth.
   return {
     count: Math.min(count, MAX_UNPARSED_TOOL_CALL_MARKERS),
-    countIsLowerBound: count > MAX_UNPARSED_TOOL_CALL_MARKERS,
+    countIsLowerBound: count > MAX_UNPARSED_TOOL_CALL_MARKERS || at >= 0,
   };
 }
