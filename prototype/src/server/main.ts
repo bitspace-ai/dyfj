@@ -240,6 +240,7 @@ export interface WorkbenchUnixServerOptions {
   > & Partial<
     Pick<
       WorkbenchConfig,
+      | "stepExtension"
       | "codexReasoningEffort"
       | "codexWorkbenchTools"
       | "codexOperatorContext"

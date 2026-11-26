@@ -147,7 +147,28 @@ export function formatRuntimeEvent(
   }
   if (event.type === "toolStepLimitReached") {
     const maxSteps = typeof event.maxSteps === "number" ? event.maxSteps : "?";
-    return `tool: reached ${maxSteps}-step limit; asking the model for a handoff`;
+    const soft = typeof event.softLimit === "number" ? event.softLimit : null;
+    const policy = soft !== null && soft !== maxSteps
+      ? ` (soft ${soft}, extended)`
+      : "";
+    return `tool: reached ${maxSteps}-step limit${policy}; asking the model for a handoff`;
+  }
+  if (event.type === "stepBudgetExtended") {
+    const from = typeof event.from === "number" ? event.from : "?";
+    const to = typeof event.to === "number" ? event.to : "?";
+    const ceiling = typeof event.ceiling === "number" ? event.ceiling : "?";
+    return `tool: step budget extended ${from} → ${to} on progress (ceiling ${ceiling})`;
+  }
+  if (event.type === "stepBudgetStopped") {
+    const reason = typeof event.reason === "string"
+      ? sanitizeBoundaryText(event.reason, 32)
+      : "stop";
+    const limit = typeof event.effectiveLimit === "number"
+      ? event.effectiveLimit
+      : "?";
+    const soft = typeof event.softLimit === "number" ? event.softLimit : null;
+    const policy = soft === null ? "" : ` (soft ${soft})`;
+    return `tool: step budget stopped at ${limit} steps${policy}: ${reason}`;
   }
   // A handoff the model wrote is the reply itself; only the fallback needs
   // saying, because the reply is then the runtime's notice.
@@ -203,41 +224,79 @@ export function formatRuntimeEvent(
       event.isError === true ? "failed" : "finished"
     }${duration}${reason}${status}${reconciliation}`;
   }
-  if (event.type === "memoryRecallNegotiated") {
-    const era = event.era === "modern" || event.era === "legacy"
-      ? event.era
-      : null;
-    const identifier = (value: unknown): string | null =>
-      typeof value === "string" &&
-        value.length > 0 && value.length <= 64 &&
-        /^[A-Za-z0-9._:/@+-]+$/.test(value)
-        ? value
-        : null;
-    const revision = identifier(event.revision);
-    const rawServer = typeof event.server === "object" &&
-        event.server !== null && !Array.isArray(event.server)
-      ? event.server as Record<string, unknown>
-      : null;
-    const serverName = rawServer === null ? null : identifier(rawServer.name);
-    const serverVersion = rawServer === null
-      ? null
-      : identifier(rawServer.version);
-    if (!Array.isArray(event.extensions) || event.extensions.length > 8) {
+  if (event.type === "memoryRecallNegotiated") return memoryRecallLine(event);
+  if (
+    event.type === "toolResultTrimmed" ||
+    event.type === "contextFitted" ||
+    event.type === "contextCompressed"
+  ) {
+    return contextLine(event);
+  }
+  if (event.type === "continuityReconstructing") {
+    const projected = event.priorMessagesProjected;
+    const leftOut = event.priorMessagesLeftOut;
+    if (
+      typeof projected !== "number" || !Number.isInteger(projected) ||
+      projected < 0 ||
+      typeof leftOut !== "number" || !Number.isInteger(leftOut) || leftOut < 0
+    ) {
       return null;
     }
-    const extensions = event.extensions.map(identifier);
-    if (
-      era === null || revision === null ||
-      extensions.some((extension) => extension === null)
-    ) return null;
-    const server = serverName === null || serverVersion === null
-      ? ""
-      : ` server=${serverName}@${serverVersion}`;
-    const extensionText = extensions.length === 0
-      ? ""
-      : ` extensions=${extensions.join(",")}`;
-    return `Memory recall MCP: era=${era} revision=${revision}${server}${extensionText}`;
+    const phrase = continuityReconstructionPhrase(event.reason);
+    const noun = projected === 1 ? "earlier message" : "earlier messages";
+    const tail = leftOut > 0 ? `, ${leftOut} left out.` : ".";
+    return `· agent session replaced: ${phrase}. Sending ${projected} ${noun}${tail}`;
   }
+  return null;
+}
+
+/**
+ * The `memoryRecallNegotiated` line: the era, revision and server the memory
+ * MCP negotiated, or null when any of them is not a value this client will
+ * print. Every field is unvalidated JSON, so each is shape-checked here.
+ */
+function memoryRecallLine(event: Record<string, unknown>): string | null {
+  const era = event.era === "modern" || event.era === "legacy"
+    ? event.era
+    : null;
+  const identifier = (value: unknown): string | null =>
+    typeof value === "string" &&
+      value.length > 0 && value.length <= 64 &&
+      /^[A-Za-z0-9._:/@+-]+$/.test(value)
+      ? value
+      : null;
+  const revision = identifier(event.revision);
+  const rawServer = typeof event.server === "object" &&
+      event.server !== null && !Array.isArray(event.server)
+    ? event.server as Record<string, unknown>
+    : null;
+  const serverName = rawServer === null ? null : identifier(rawServer.name);
+  const serverVersion = rawServer === null
+    ? null
+    : identifier(rawServer.version);
+  if (!Array.isArray(event.extensions) || event.extensions.length > 8) {
+    return null;
+  }
+  const extensions = event.extensions.map(identifier);
+  if (
+    era === null || revision === null ||
+    extensions.some((extension) => extension === null)
+  ) return null;
+  const server = serverName === null || serverVersion === null
+    ? ""
+    : ` server=${serverName}@${serverVersion}`;
+  const extensionText = extensions.length === 0
+    ? ""
+    : ` extensions=${extensions.join(",")}`;
+  return `Memory recall MCP: era=${era} revision=${revision}${server}${extensionText}`;
+}
+
+/**
+ * The three context lines: a tool result trimmed to fit the window, a request
+ * fitted to it, and elder turns compressed. They share the window and token
+ * figures, so they read together.
+ */
+function contextLine(event: Record<string, unknown>): string {
   if (event.type === "toolResultTrimmed") {
     const commandId = typeof event.commandId === "string"
       ? event.commandId
@@ -273,35 +332,17 @@ export function formatRuntimeEvent(
     return `context: fitted to the ${window} window${cause} ` +
       `(~${before} → ~${after} tokens${trimmed}${compressed})`;
   }
-  if (event.type === "contextCompressed") {
-    const turns = typeof event.turnsCompressed === "number"
-      ? event.turnsCompressed
-      : "?";
-    const before = typeof event.tokensBeforeEstimate === "number"
-      ? event.tokensBeforeEstimate
-      : "?";
-    const after = typeof event.tokensAfterEstimate === "number"
-      ? event.tokensAfterEstimate
-      : "?";
-    return `context: compressed ${turns} elder turn(s) ` +
-      `(~${before} → ~${after} tokens)`;
-  }
-  if (event.type === "continuityReconstructing") {
-    const projected = event.priorMessagesProjected;
-    const leftOut = event.priorMessagesLeftOut;
-    if (
-      typeof projected !== "number" || !Number.isInteger(projected) ||
-      projected < 0 ||
-      typeof leftOut !== "number" || !Number.isInteger(leftOut) || leftOut < 0
-    ) {
-      return null;
-    }
-    const phrase = continuityReconstructionPhrase(event.reason);
-    const noun = projected === 1 ? "earlier message" : "earlier messages";
-    const tail = leftOut > 0 ? `, ${leftOut} left out.` : ".";
-    return `· agent session replaced: ${phrase}. Sending ${projected} ${noun}${tail}`;
-  }
-  return null;
+  const turns = typeof event.turnsCompressed === "number"
+    ? event.turnsCompressed
+    : "?";
+  const before = typeof event.tokensBeforeEstimate === "number"
+    ? event.tokensBeforeEstimate
+    : "?";
+  const after = typeof event.tokensAfterEstimate === "number"
+    ? event.tokensAfterEstimate
+    : "?";
+  return `context: compressed ${turns} elder turn(s) ` +
+    `(~${before} → ~${after} tokens)`;
 }
 
 function continuityReconstructionPhrase(reason: unknown): string {

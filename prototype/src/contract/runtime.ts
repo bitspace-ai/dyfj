@@ -292,7 +292,37 @@ export type WorkbenchRuntimeEvent =
     /** The tool-step limit was reached; a no-tools handoff call is attempted next. */
     type: "toolStepLimitReached";
     sessionId: string;
+    /** The effective limit the turn reached, after any extension. */
     maxSteps: number;
+    /** The configured soft limit, before any extension; absent from an older runtime. */
+    softLimit?: number;
+    /** Why the step budget stopped the turn; absent from an older runtime. */
+    reason?: string;
+  }
+  | {
+    /**
+     * The turn's soft step limit was raised because the step made forward
+     * progress. Emitted once per extension.
+     */
+    type: "stepBudgetExtended";
+    sessionId: string;
+    /** The effective limit before this extension. */
+    from: number;
+    /** The effective limit after it. */
+    to: number;
+    softLimit: number;
+    ceiling: number;
+    step: number;
+  }
+  | {
+    /** The step budget stopped the turn: a stall, the ceiling, or spent spend. */
+    type: "stepBudgetStopped";
+    sessionId: string;
+    reason: string;
+    effectiveLimit: number;
+    softLimit: number;
+    ceiling: number;
+    step: number;
   }
   | {
     /**

@@ -16,6 +16,7 @@ import {
 } from "../contract/mod.ts";
 import type { AutoApprovals } from "../contract/mod.ts";
 import { formatMoney } from "./route.ts";
+import type { StepStopReason } from "./step-budget.ts";
 import type { WorkbenchValidationSummary } from "./runtime-types.ts";
 
 export interface WorkbenchReceiptInput {
@@ -62,6 +63,10 @@ export interface WorkbenchReceiptInput {
     maxToolSteps: number;
     limitReached: boolean;
     handoff?: "model" | "notice";
+    /** The configured soft limit, before any extension. */
+    softToolSteps?: number;
+    /** Why the step budget stopped tool use. */
+    stepStopReason?: StepStopReason;
     autoApprovals?: AutoApprovals;
   };
   /**
@@ -106,6 +111,62 @@ function actualCost(usd: number, basis: CostBasis | undefined): string {
     : `~${formatMoney(usd)} (catalog estimate)`;
 }
 
+/**
+ * The effective step policy, in parentheses: the soft limit the turn was
+ * configured for, and - when the budget stopped it rather than the model -
+ * why. Empty for a turn inside its soft limit, so a short turn's receipt is
+ * what it always was.
+ *
+ * A turn the budget stopped never reads "limit reached": a stall two steps
+ * past a soft limit of 32 reached no limit, and a receipt that said it did
+ * would be wrong. The handoff marker folds into the same parenthetical, so
+ * the line stays one clause.
+ */
+export function stepPolicySegment(agent: {
+  softToolSteps?: number;
+  maxToolSteps: number;
+  stepStopReason?: StepStopReason;
+  limitReached: boolean;
+  handoff?: "model" | "notice";
+}): string {
+  const parts: string[] = [];
+  // A turn inside its soft limit reports nothing extra: its receipt is the
+  // one it always was. Past it, the soft limit is named, because the reported
+  // limit is then the extended one.
+  if (
+    agent.softToolSteps !== undefined &&
+    (agent.softToolSteps !== agent.maxToolSteps ||
+      agent.stepStopReason !== undefined)
+  ) {
+    parts.push(`soft ${agent.softToolSteps}`);
+  }
+  if (agent.stepStopReason !== undefined) {
+    parts.push(`stopped: ${agent.stepStopReason}`);
+    if (agent.limitReached) parts.push(handoffText(agent.handoff));
+  }
+  return parts.length === 0 ? "" : ` (${parts.join(", ")})`;
+}
+
+/** How a turn that reached its limit left the handoff, for the receipt. */
+function handoffText(handoff: "model" | "notice" | undefined): string {
+  return handoff === "model" ? "handoff" : "handoff failed";
+}
+
+/**
+ * The marker a fixed-limit turn carries once it reaches its limit, which is
+ * the text it always printed. A turn the budget stopped carries the same
+ * information inside its policy parenthetical instead.
+ */
+function limitReachedText(agent: {
+  handoff?: "model" | "notice";
+}): string {
+  return agent.handoff === "model"
+    ? " (limit reached; handoff)"
+    : agent.handoff === "notice"
+    ? " (limit reached; handoff failed, notice)"
+    : " (limit reached)";
+}
+
 export function buildWorkbenchReceipt(input: WorkbenchReceiptInput): string {
   const lines = [
     "Workbench receipt",
@@ -138,12 +199,11 @@ export function buildWorkbenchReceipt(input: WorkbenchReceiptInput): string {
     } written`,
     `Calls:   ${input.totalCalls}`,
     `Tool steps: ${input.agent.toolStepsUsed}/${input.agent.maxToolSteps}` +
-      (input.agent.limitReached
-        ? input.agent.handoff === "model"
-          ? " (limit reached; handoff)"
-          : input.agent.handoff === "notice"
-          ? " (limit reached; handoff failed, notice)"
-          : " (limit reached)"
+      stepPolicySegment(input.agent) +
+      // A turn the budget stopped says so in the policy segment above; only a
+      // turn that reached a limit it could not pass carries this marker.
+      (input.agent.limitReached && input.agent.stepStopReason === undefined
+        ? limitReachedText(input.agent)
         : ""),
   );
   const auto = input.agent.autoApprovals;

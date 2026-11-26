@@ -78,7 +78,7 @@ const SEVERITIES: [&str; 4] = ["blocker", "major", "minor", "paper-cut"];
 
 /// The bound on a session's tool-step limit. The runtime's configured
 /// ceiling can be lower; the runtime refuses a turn above it.
-pub const TOOL_STEPS_BOUND: u32 = 64;
+pub const TOOL_STEPS_BOUND: u32 = 256;
 
 /// A tool-step limit as typed: an integer from 1 through the bound.
 pub fn parse_tool_steps(value: &str) -> Option<u32> {
@@ -862,9 +862,9 @@ async fn fast_toggle(client: &Client, session: &mut Session, target: Option<bool
 }
 
 /// `/steps` shows the session's tool-step limit; `/steps N` sets it for the
-/// rest of the session. A value above the runtime's ceiling is refused and the
-/// limit stays as it was. The runtime checks every turn again, because its
-/// ceiling can change when it restarts.
+/// rest of the session as a hard cap: the turn stops there whatever its
+/// progress. A value above the runtime's ceiling is refused and the limit
+/// stays as it was. The runtime checks every turn again on restart.
 async fn steps(client: &Client, session: &mut Session, target: Option<u32>) {
     let status = match client.request("runtime/status", json!({})).await {
         Ok(status) => status,
@@ -1536,7 +1536,7 @@ pub(crate) mod run_tests {
         }
         assert_eq!(parse("/steps"), Some(Command::Steps(None)));
         assert_eq!(parse("/steps 12"), Some(Command::Steps(Some(12))));
-        for line in ["/steps 0", "/steps 65", "/steps x", "/steps -3", "/steps 1.5"] {
+        for line in ["/steps 0", "/steps 257", "/steps x", "/steps -3", "/steps 1.5"] {
             assert!(matches!(parse(line), Some(Command::Usage(_))), "{line}");
         }
         assert!(matches!(parse("/steps 2 3"), Some(Command::Usage(_))));

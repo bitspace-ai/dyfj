@@ -157,6 +157,16 @@ export function dispatchStartedEvent(
 }
 
 /**
+ * One tool-step budget decision; `content` carries the figures (soft limit,
+ * ceiling, effective limit, the step, and why it extended or stopped).
+ */
+export function stepBudgetEvent(
+  fields: EventFieldsWith<"content">,
+): TypedEventInsert<"step_budget"> {
+  return build("step_budget", fields);
+}
+
+/**
  * One builder per event type. A new `event_type` in the DDL fails typecheck
  * here until it has a builder.
  */
@@ -178,4 +188,5 @@ export const EVENT_BUILDERS: {
   approval_parked: approvalParkedEvent,
   approval_resolved: approvalResolvedEvent,
   dispatch_started: dispatchStartedEvent,
+  step_budget: stepBudgetEvent,
 };

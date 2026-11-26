@@ -153,7 +153,8 @@
           "defaultTurnBudgetUsd": 0.2,
           "defaultRunawayStallUsd": 0.5,
           "maxToolSteps": 32,
-          "maxToolStepsCeiling": 64,
+          "maxToolStepsCeiling": 128,
+          "stepExtension": true,
           "codexReasoningEffort": "medium",
           "models": {
             "total": 4,
@@ -341,7 +342,8 @@
           "defaultTurnBudgetUsd": 0.2,
           "defaultRunawayStallUsd": 0.5,
           "maxToolSteps": 32,
-          "maxToolStepsCeiling": 64,
+          "maxToolStepsCeiling": 128,
+          "stepExtension": true,
           "codexReasoningEffort": "medium",
           "models": {
             "total": 4,

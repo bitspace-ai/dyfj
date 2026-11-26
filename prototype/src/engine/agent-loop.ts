@@ -46,6 +46,15 @@ import {
   ToolStepLimitConclusionError,
 } from "./errors.ts";
 import { writeMaybe } from "./event-writes.ts";
+import { writeStepBudgetEvent, stepBudgetRecord } from "./step-budget-events.ts";
+import {
+  forcedConclusionSystemPrompt,
+  HANDOFF_NOTICE_CALLS,
+  HANDOFF_OUTPUT_TOKENS,
+  handoffRequest,
+  hasHandoffLabels,
+  stepLimitNotice,
+} from "./step-limit-handoff.ts";
 import { boundToolResult, estimateRequest, fitRequest } from "./fit-request.ts";
 import type { LoopTurnResult } from "./observed-turn.ts";
 import { recoveredTurn } from "./recovered-turn.ts";
@@ -63,11 +72,6 @@ import {
   type RecentToolCall,
   type TurnState,
 } from "./turn-state.ts";
-
-/** The handoff call's output cap; the catalog cap applies when it is lower. */
-export const HANDOFF_OUTPUT_TOKENS = 2048;
-/** How many of the turn's latest tool calls the fallback notice names. */
-export const HANDOFF_NOTICE_CALLS = 5;
 
 export interface AgentLoopOutcome {
   /** The last call's result; aborted when the turn was cancelled. */
@@ -143,17 +147,16 @@ export async function agentLoop(
     !input.abortSignal?.aborted &&
     result.toolCalls &&
     result.toolCalls.length > 0 &&
-    state.toolSteps < session.maxToolSteps
+    state.stepBudget.allowsAnotherStep(state.toolSteps)
   ) {
     showProgress(turn, result, streaming);
     const step = await runToolStep(turn, result, messages, seenToolCalls);
-    if (step !== "aborted") {
-      noteToolProgress(state, step, progressSeen, seenToolCalls);
-    }
     if (step === "aborted") {
       result = { ...result, stopReason: "aborted", toolCalls: undefined };
       break;
     }
+    const progressed = noteToolProgress(state, step, progressSeen, seenToolCalls);
+    await decideStepBudget(turn, step, progressed);
     result = await followUp(turn, result, messages, step, streaming);
     captureTurnState(state, result);
     result = abortedIfCancelled(turn, result);
@@ -246,6 +249,17 @@ function abortedIfCancelled(
   return result;
 }
 
+/**
+ * Whether a tool result reports a failure to the model. `isError` covers a
+ * refused or thrown call; the read-only file tools report a missing or
+ * out-of-root path as model-facing `error:` text instead. A step whose every
+ * call failed learned nothing the next step can build on, whatever the
+ * runaway guard counts, so the step budget does not call it progress.
+ */
+function failedToolResult(summary: ToolResultSummary): boolean {
+  return summary.isError || /^error\b/.test(summary.result);
+}
+
 /** Tools whose success changes the workspace, so a repeated call is new work. */
 const WRITE_TOOLS = new Set(["write_file", "edit_file"]);
 /** Tools whose success starts a child turn, making prior waits/reads stale. */
@@ -267,7 +281,7 @@ function noteToolProgress(
   step: ToolStep,
   progressSeen: Set<string>,
   seenToolCalls: Set<string>,
-): void {
+): boolean {
   let progress = false;
   for (const [index, call] of step.requestedToolCalls.entries()) {
     const summary = step.stepResults[index];
@@ -298,6 +312,82 @@ function noteToolProgress(
     }
   }
   if (progress) state.session.budget.noteToolProgress();
+  return progress;
+}
+
+/**
+ * Ask the step budget what the step just completed means, record the answer
+ * durably and as a runtime event, and narrate an extension or a stop. The
+ * budget's own state is the only thing that decides whether the loop continues:
+ * this function writes the evidence, it does not choose.
+ */
+async function decideStepBudget(
+  turn: RoutedTurn,
+  step: ToolStep,
+  progressed: boolean,
+): Promise<void> {
+  const { state, input } = turn;
+  const { session } = state;
+  const budget = state.stepBudget;
+  // A step whose every call failed is not forward progress, even though the
+  // runaway guard counts a new failed call as a new call.
+  const productive = progressed &&
+    !step.stepResults.every((result) => failedToolResult(result));
+  const decision = budget.decide({
+    step: state.toolSteps,
+    productive,
+    turnSpentUsd: session.budget.totalCost,
+    stallSpentUsd: session.budget.stallSpentUsd,
+    turnLimitUsd: session.budget.config.turnLimitUsd,
+    runawayStallUsd: session.budget.config.runawayStallUsd,
+  });
+  // A step inside the soft budget decides nothing, so it records nothing: the
+  // log carries the decisions that changed the turn's bound (an extension) or
+  // ended tool use, not one row per step of every turn.
+  if (decision.kind === "continue") return;
+  await writeStepBudgetEvent(
+    state,
+    stepBudgetRecord(decision, {
+      softLimit: budget.softLimit,
+      ceiling: budget.ceiling,
+      effectiveLimit: budget.effectiveLimit,
+      step: state.toolSteps,
+      productive,
+      stalledSteps: budget.stalledSteps,
+    }),
+    turn.ports.store,
+  );
+  if (decision.kind === "extended") {
+    session.log(
+      `Step budget extended ${decision.from} → ${decision.to} ` +
+        `(soft ${budget.softLimit}, ceiling ${budget.ceiling}): the step made progress.`,
+    );
+    await emitRuntimeEvent(input.frames?.onRuntimeEvent, {
+      type: "stepBudgetExtended",
+      sessionId: session.sessionId,
+      from: decision.from,
+      to: decision.to,
+      softLimit: budget.softLimit,
+      ceiling: budget.ceiling,
+      step: state.toolSteps,
+    });
+    return;
+  }
+  if (decision.kind === "stop") {
+    session.log(
+      `Tool-step budget stopped at ${state.toolSteps} ` +
+        `(${decision.reason}; soft ${budget.softLimit}, ceiling ${budget.ceiling}).`,
+    );
+    await emitRuntimeEvent(input.frames?.onRuntimeEvent, {
+      type: "stepBudgetStopped",
+      sessionId: session.sessionId,
+      reason: decision.reason,
+      effectiveLimit: decision.effectiveLimit,
+      softLimit: budget.softLimit,
+      ceiling: budget.ceiling,
+      step: state.toolSteps,
+    });
+  }
 }
 
 interface ToolStep {
@@ -361,7 +451,12 @@ async function runToolStep(
     const sized = next.forceConclude ? withoutReplay(sent) : sent;
     return estimateRequest(turn, {
       systemPrompt: next.systemPrompt,
-      messages: next.atCap ? [...sized, handoffRequest(state)] : sized,
+      messages: next.atCap
+        ? [
+          ...sized,
+          handoffRequest(state.stepBudget.stopFacts(state.toolSteps)),
+        ]
+        : sized,
       tools: next.tools,
     });
   };
@@ -635,7 +730,7 @@ async function followUp(
   if (forceConclude) {
     session.log(
       atCap
-        ? `Reached the ${session.maxToolSteps}-step tool limit; asking for a handoff.`
+        ? `Reached the ${state.stepBudget.effectiveLimit}-step tool limit; asking for a handoff.`
         : step.approvalDenied
         ? "A tool call was not approved; forcing a concluding answer."
         : "Model repeated prior tool calls; forcing a concluding answer.",
@@ -644,7 +739,11 @@ async function followUp(
       await emitRuntimeEvent(input.frames?.onRuntimeEvent, {
         type: "toolStepLimitReached",
         sessionId: session.sessionId,
-        maxSteps: session.maxToolSteps,
+        maxSteps: state.stepBudget.effectiveLimit,
+        softLimit: state.stepBudget.softLimit,
+        ...(state.stepBudget.stopReason === undefined
+          ? {}
+          : { reason: state.stepBudget.stopReason }),
       });
     }
   }
@@ -717,7 +816,9 @@ async function stepLimitHandoff(
   // The request itself is the last thing the model reads, after the last
   // tool result; the system prompt carries it too, for the adapter that sends
   // no transcript.
-  messages.push(handoffRequest(state));
+  messages.push(
+    handoffRequest(state.stepBudget.stopFacts(state.toolSteps)),
+  );
   try {
     await fitRequest(turn, { systemPrompt, messages, tools: undefined }, "before_send");
     const estimatedInputCount = estimateRuntimeInputCount(
@@ -775,35 +876,14 @@ async function stepLimitHandoff(
   streaming.streamedText = false;
   return {
     ...(handoff ?? lastStep),
-    text: stepLimitNotice(state.toolSteps, session.maxToolSteps, failure, state.recentToolCalls),
+    text: stepLimitNotice(
+      state.stepBudget.stopFacts(state.toolSteps),
+      failure,
+      state.recentToolCalls,
+    ),
     stopReason: "stop",
     toolCalls: undefined,
   };
-}
-
-const HANDOFF_LABELS = ["done", "next", "uncommitted state"] as const;
-
-/**
- * Whether a reply is a handoff: each of the Done, Next and Uncommitted state
- * labels starts a line, followed by a colon or alone on it (a heading).
- * Markdown emphasis, heading marks and list markers around a label are
- * ignored, and "Next steps" counts as Next; no other label takes a suffix.
- */
-export function hasHandoffLabels(text: string): boolean {
-  const lines = text.split("\n").map((line) =>
-    line.replace(/[*_`]/g, "")
-      .replace(/^\s*(?:(?:[-+>#]+|\d+[.)])\s*)*/, "")
-      .trim()
-      .toLowerCase()
-  );
-  return HANDOFF_LABELS.every((label) =>
-    lines.some((line) => {
-      if (!line.startsWith(label)) return false;
-      const rest = line.slice(label.length).trim();
-      const body = label === "next" ? rest.replace(/^steps\b\s*/, "") : rest;
-      return body === "" || body.startsWith(":");
-    })
-  );
 }
 
 /**
@@ -827,35 +907,9 @@ async function emitHandoff(
   await emitRuntimeEvent(turn.input.frames?.onRuntimeEvent, {
     type: "toolStepLimitHandoff",
     sessionId: session.sessionId,
-    maxSteps: session.maxToolSteps,
+    maxSteps: turn.state.stepBudget.effectiveLimit,
     source,
   });
-}
-
-/**
- * The runtime's notice when the handoff call fails: the limit, the failure's
- * class, and the turn's last tool calls by command and outcome. It carries no
- * tool arguments, no results and no model text.
- */
-export function stepLimitNotice(
-  toolSteps: number,
-  maxToolSteps: number,
-  failure: unknown,
-  calls: readonly RecentToolCall[],
-): string {
-  const lines = [
-    `Tool-step limit reached (${toolSteps}/${maxToolSteps}). The handoff ` +
-    `call did not produce a handoff (${classifyErrorKind(failure)}), so ` +
-    "this notice lists the turn's last tool calls instead.",
-    "",
-    "Last tool calls:",
-    ...(calls.length === 0 ? ["- none recorded"] : calls.map((call) =>
-      `- step ${call.step}: ${sanitizeBoundaryText(call.commandId, 128)} (${call.outcome})`
-    )),
-    "",
-    "Uncommitted state is unknown. Check `git status` before the next prompt.",
-  ];
-  return lines.join("\n");
 }
 
 /** Keep the turn's latest tool calls for the fallback notice. */
@@ -903,7 +957,11 @@ function nextRequestShape(
   systemPrompt: string;
   tools: TurnState["commandTools"] | undefined;
 } {
-  const atCap = state.toolSteps >= state.session.maxToolSteps;
+  // The budget decides the cap: it is the effective limit (soft, extended) or
+  // a stop the budget already reached, never the configured soft limit alone.
+  // A stop the budget made names itself, so the handoff instruction does not
+  // tell the model a limit was reached when a stall ended the turn.
+  const atCap = state.stepBudget.atLimit(state.toolSteps);
   const forceConclude = atCap || allRepeats || approvalDenied;
   return {
     atCap,
@@ -912,67 +970,18 @@ function nextRequestShape(
       ? forcedConclusionSystemPrompt(
         state.systemPrompt,
         atCap
-          ? "limit"
+          ? state.stepBudget.stopReason ?? "limit"
           : approvalDenied
           ? "approval_denied"
           : "repeated_tool_calls",
-        state.session.maxToolSteps,
+        // The step the turn stopped at, not the limit it ran under: a stall
+        // ends the turn short of its limit, and the model must not be told
+        // it reached a step it never took.
+        state.stepBudget.stopFacts(state.toolSteps),
       )
       : state.systemPrompt,
     tools: forceConclude ? undefined : state.commandTools,
   };
-}
-
-function forcedConclusionSystemPrompt(
-  baseSystemPrompt: string,
-  reason: "limit" | "repeated_tool_calls" | "approval_denied",
-  maxToolSteps: number,
-): string {
-  if (reason === "limit") {
-    return handoffSystemPrompt(
-      baseSystemPrompt,
-      `this turn reached its ${maxToolSteps}-step tool limit`,
-    );
-  }
-  const reasonText = reason === "approval_denied"
-    ? "tool use ended because a tool call was not approved"
-    : "tool use ended because the model repeated prior tool calls";
-  return baseSystemPrompt + "\n\n" +
-    `Workbench instruction: ${reasonText}. Answer the original operator prompt ` +
-    "from the transcript above. Do not request or call more tools.";
-}
-
-/** The handoff request as the turn's last user message. */
-function handoffRequest(state: TurnState): WorkbenchMessage {
-  return {
-    role: "user",
-    content: handoffInstruction(
-      `this turn reached its ${state.session.maxToolSteps}-step tool limit`,
-    ),
-  };
-}
-
-/** The handoff instruction appended to the system prompt. */
-export function handoffSystemPrompt(
-  baseSystemPrompt: string,
-  reasonText: string,
-): string {
-  return baseSystemPrompt + "\n\n" + handoffInstruction(reasonText);
-}
-
-/**
- * The handoff instruction: why tool use ended, then a short handoff for the
- * operator's next prompt. The request that carries it offers no tools.
- */
-export function handoffInstruction(reasonText: string): string {
-  return `Workbench instruction: tool use ended because ${reasonText}. ` +
-    "Do not call tools. Write a handoff for the operator's next prompt, " +
-    "under 200 words, in three parts. Start each part on its own line with " +
-    "its label and a colon. Done: what this turn completed, with file " +
-    "paths. Next: the next concrete step. Uncommitted state: files changed " +
-    'but not committed, commands started but not verified, or "none known". ' +
-    "State only what the transcript shows, and " +
-    "mark anything you infer as inferred.";
 }
 
 function commandResultText(

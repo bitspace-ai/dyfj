@@ -112,15 +112,51 @@ pub fn line(receipt: &Value, repl_total: f64) -> String {
             .and_then(Value::as_bool)
             == Some(true);
         let handoff = receipt.pointer("/agent/handoff").and_then(Value::as_str);
-        parts.push(format!(
-            "tools {used}/{max}{}",
-            match (limit, handoff) {
-                (false, _) => "",
-                (true, Some("model")) => " (limit reached · handoff)",
-                (true, Some("notice")) => " (limit reached · handoff failed)",
-                (true, _) => " (limit reached)",
+        // The effective step policy: the soft limit the turn was configured
+        // for, and why the budget stopped it. Absent from an older runtime,
+        // which renders the line this client always printed.
+        let soft = receipt
+            .pointer("/agent/softToolSteps")
+            .and_then(Value::as_u64);
+        let stopped = receipt
+            .pointer("/agent/stepStopReason")
+            .and_then(Value::as_str);
+        let mut policy = Vec::new();
+        // Named when the turn ran past its soft limit, and whenever the budget
+        // stopped it: a stop at the soft limit is the case where the two
+        // numbers agree but the reason matters.
+        if let Some(soft) = soft.filter(|soft| *soft != max || stopped.is_some()) {
+            policy.push(format!("soft {soft}"));
+        }
+        if let Some(stopped) = stopped {
+            // A turn the budget stopped says what stopped it, in the same
+            // parenthetical, and does not claim a limit was reached: a stall
+            // two steps past a soft limit of 32 reached no limit.
+            policy.push(format!("stopped: {}", crate::approval::visible(stopped)));
+            if limit {
+                policy.push(
+                    match handoff {
+                        Some("model") => "handoff",
+                        _ => "handoff failed",
+                    }
+                    .into(),
+                );
             }
-        ));
+        }
+        let policy = if policy.is_empty() {
+            String::new()
+        } else {
+            format!(" ({})", policy.join(", "))
+        };
+        // Only a turn that reached a limit it could not pass carries the limit
+        // marker; a turn the budget stopped carries the same information above.
+        let marker = match (limit, stopped, handoff) {
+            (true, None, Some("model")) => " (limit reached · handoff)",
+            (true, None, Some("notice")) => " (limit reached · handoff failed)",
+            (true, None, _) => " (limit reached)",
+            _ => "",
+        };
+        parts.push(format!("tools {used}/{max}{policy}{marker}"));
     }
     // Calls that ran without a prompt: the read-only allowlist and the
     // operator's "allow for the rest of the session" grants.
@@ -438,6 +474,41 @@ mod tests {
         assert!(line(&r, 0.0).contains("tools 2/2 (limit reached · handoff failed)"));
         r["agent"].as_object_mut().unwrap().remove("handoff");
         assert!(line(&r, 0.0).contains("tools 2/2 (limit reached) ·"));
+    }
+
+    /// BIT-992 N3: a turn the step budget stopped names what stopped it, in
+    /// the same parenthetical as the soft limit, and does not claim a limit was
+    /// reached — a stall at 41 of 48 reached no limit. The handoff marker folds
+    /// into that parenthetical rather than becoming a second group.
+    #[test]
+    fn names_what_stopped_a_turn_short_of_its_limit() {
+        let mut r = receipt();
+        r["agent"] = json!({"toolStepsUsed": 41, "maxToolSteps": 48, "softToolSteps": 32,
+            "limitReached": true, "handoff": "model", "stepStopReason": "stall"});
+        let rendered = line(&r, 0.0);
+        assert!(
+            rendered.contains("tools 41/48 (soft 32, stopped: stall, handoff)"),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("limit reached"), "{rendered}");
+        // One parenthetical, not two.
+        assert_eq!(rendered.matches('(').count(), 1, "{rendered}");
+        r["agent"]["handoff"] = json!("notice");
+        let failed = line(&r, 0.0);
+        assert!(
+            failed.contains("tools 41/48 (soft 32, stopped: stall, handoff failed)"),
+            "{failed}"
+        );
+        assert!(!failed.contains("limit reached"), "{failed}");
+        // A ceiling stop reads the same way, naming the ceiling it reached.
+        r["agent"]["stepStopReason"] = json!("ceiling");
+        r["agent"]["toolStepsUsed"] = json!(48);
+        let ceiling = line(&r, 0.0);
+        assert!(
+            ceiling.contains("tools 48/48 (soft 32, stopped: ceiling, handoff failed)"),
+            "{ceiling}"
+        );
+        assert!(!ceiling.contains("limit reached"), "{ceiling}");
     }
 
     /// BIT-707: calls that ran without a prompt are counted beside the tools.

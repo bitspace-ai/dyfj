@@ -383,10 +383,10 @@ describe("parseArgs", () => {
       parseArgs(["--tool-steps", "12", "exec", "x"]).overrides.toolSteps,
       12,
     );
-    for (const value of ["0", "65", "1.5", "-3", "many"]) {
+    for (const value of ["0", "257", "1.5", "-3", "many"]) {
       assert.strictEqual(
         parseArgs(["--tool-steps", value, "exec", "x"]).error,
-        "--tool-steps must be an integer from 1 through 64",
+        "--tool-steps must be an integer from 1 through 256",
         value,
       );
     }

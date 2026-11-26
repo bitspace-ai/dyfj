@@ -46,7 +46,24 @@ import {
 // runtime drops tools and asks for a handoff. The configured ceiling
 // (maxToolStepsCeiling) can only lower it. The default is
 // AGENT_DEFAULTS.maxToolSteps; no unlimited mode exists.
-export const MAX_TOOL_STEPS = 64;
+//
+// Since BIT-992 this bound is the turn's *soft* limit: a turn making forward
+// progress may extend past it toward `maxToolStepsCeiling`, in chunks, and a
+// stalled turn stops before reaching it (`step-budget.ts`). The ceiling is the
+// number that may never be passed.
+export const MAX_TOOL_STEPS = 256;
+
+/**
+ * The hard bound a turn may never pass: the configured ceiling, clamped to the
+ * absolute `MAX_TOOL_STEPS` bound. A non-integer or absent value takes the
+ * absolute bound, so a malformed setting can only widen the turn to the bound
+ * this runtime has always enforced, never past it.
+ */
+function effectiveCeiling(ceiling: number | undefined): number {
+  return ceiling !== undefined && Number.isInteger(ceiling) && ceiling >= 1
+    ? Math.min(MAX_TOOL_STEPS, ceiling)
+    : MAX_TOOL_STEPS;
+}
 
 function effectiveMaxToolSteps(
   value: number | undefined,
@@ -198,6 +215,13 @@ export async function openSession(
       input.maxToolSteps,
       input.maxToolStepsCeiling,
     ),
+    maxToolStepsCeiling: effectiveCeiling(input.maxToolStepsCeiling),
+    // A session's own tool-step limit (`--tool-steps N`, `/steps N`) is the
+    // number the operator asked for, so it is a hard cap: progress-based
+    // extension applies to the configured default, never to an explicit value.
+    stepExtension: input.toolStepsOverride === true
+      ? false
+      : input.stepExtension ?? AGENT_DEFAULTS.stepExtension,
     fallbackRoot,
     honoredWorkspace: workspace.honored,
     workspaceLookupFailed: workspace.lookupFailed,

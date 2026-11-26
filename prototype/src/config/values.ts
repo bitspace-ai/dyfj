@@ -23,7 +23,7 @@ export function validatePositiveUsd(value: number, source: string): number {
  * The bound on every tool-step setting: the default limit, the configured
  * ceiling and a session's own limit are all integers from 1 through this.
  */
-export const TOOL_STEPS_BOUND = 64;
+export const TOOL_STEPS_BOUND = 256;
 
 export function validateMaxToolSteps(value: number, source: string): number {
   if (!Number.isInteger(value) || value < 1 || value > TOOL_STEPS_BOUND) {
@@ -90,6 +90,23 @@ export function readMaxToolSteps(
     );
   }
   return validateMaxToolSteps(Number(trimmed), envVar);
+}
+
+/**
+ * Whether a turn making forward progress may step past its soft limit
+ * (`[agent] step_extension` / `DYFJ_STEP_EXTENSION`). Unset or empty takes
+ * the default; any other value must be a boolean, and a malformed one fails
+ * the load like every other boolean binding.
+ */
+export function readStepExtension(
+  env: Env,
+  envVar: string,
+  fallback: boolean,
+): boolean {
+  const raw = env.get(envVar);
+  const trimmed = raw?.trim();
+  if (trimmed === undefined || trimmed === "") return fallback;
+  return parseBooleanEnv(trimmed, envVar);
 }
 
 /**

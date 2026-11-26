@@ -55,6 +55,16 @@ export interface SessionPosture {
   maxToolSteps?: number;
   /** The highest limit a session may set; absent from an older runtime. */
   maxToolStepsCeiling?: number;
+  /**
+   * Whether a productive turn may step past its soft limit toward the
+   * ceiling; absent from a runtime that predates it.
+   */
+  stepExtension?: boolean;
+  /**
+   * Whether `maxToolSteps` is this session's own number (`--tool-steps N`),
+   * which is a hard cap rather than the configured default.
+   */
+  toolStepsOverride?: boolean;
   /** The session's spend limits: its own, else the runtime's defaults. */
   budget?: SessionBudget;
   /** The tool sandbox segment (BIT-662); absent from an older runtime. */
@@ -154,7 +164,14 @@ export function formatPostureLine(posture: SessionPosture): string {
     : "unknown";
   const steps = posture.maxToolSteps === undefined
     ? ""
-    : ` · ${formatToolSteps(posture.maxToolSteps, posture.maxToolStepsCeiling)}`;
+    : ` · ${
+      formatToolSteps(
+        posture.maxToolSteps,
+        posture.maxToolStepsCeiling,
+        posture.stepExtension,
+        posture.toolStepsOverride,
+      )
+    }`;
   const roots = formatRoots(posture.workspace, posture.additionalRoots);
   return `posture: ${posture.slug} · ${tier} · ${locality}${speed} · ${paid} · ` +
     `permission ${posture.permissionLevel ?? "unknown"} · ` +
@@ -201,10 +218,28 @@ function sandboxField(
   return segment === null ? {} : { sandbox: segment };
 }
 
-/** "N tool steps (ceiling M)", without the ceiling an older runtime omits. */
-export function formatToolSteps(steps: number, ceiling?: number): string {
+/**
+ * "N tool steps (ceiling M)", without the ceiling an older runtime omits, and
+ * "(extends on progress)" when the turn may step past N toward the ceiling.
+ * A session's own limit is a hard cap instead, and says so. An older runtime
+ * reports neither field, so its segment is unchanged.
+ */
+export function formatToolSteps(
+  steps: number,
+  ceiling?: number,
+  extension?: boolean,
+  override?: boolean,
+): string {
+  const parts = [
+    ...(ceiling === undefined ? [] : [`ceiling ${ceiling}`]),
+    ...(override === true
+      ? ["hard cap"]
+      : extension === true
+      ? ["extends on progress"]
+      : []),
+  ];
   return `${steps} tool steps` +
-    (ceiling === undefined ? "" : ` (ceiling ${ceiling})`);
+    (parts.length === 0 ? "" : ` (${parts.join(", ")})`);
 }
 
 /**
@@ -291,9 +326,15 @@ export async function fetchSessionPosture(
         ...((config.toolSteps ?? runtime?.maxToolSteps) !== undefined
           ? { maxToolSteps: config.toolSteps ?? runtime?.maxToolSteps }
           : {}),
+        // A session's own number is a hard cap: progress-based extension
+        // applies to the configured default, never to `--tool-steps N`.
+        ...(config.toolSteps === undefined ? {} : { toolStepsOverride: true }),
         ...(runtime?.maxToolStepsCeiling !== undefined
           ? { maxToolStepsCeiling: runtime.maxToolStepsCeiling }
           : {}),
+        ...(runtime?.stepExtension === undefined
+          ? {}
+          : { stepExtension: runtime.stepExtension }),
         ...(runtime?.fingerprint !== undefined
           ? { runtimeFingerprint: runtime.fingerprint }
           : {}),

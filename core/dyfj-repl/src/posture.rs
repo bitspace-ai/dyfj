@@ -349,9 +349,24 @@ fn posture_line_with_models(status: &Value, session: &Session, socket: &str, row
         .map(i64::from)
         .or_else(|| runtime.get("maxToolSteps").and_then(Value::as_i64));
     if let Some(steps) = steps {
-        match runtime.get("maxToolStepsCeiling").and_then(Value::as_i64) {
-            Some(ceiling) => parts.push(format!("{steps} tool steps (ceiling {ceiling})")),
-            None => parts.push(format!("{steps} tool steps")),
+        // The effective step policy: the soft limit, the ceiling, and whether
+        // a productive turn extends toward it. A runtime that reports neither
+        // extra field renders the line this client always printed.
+        let mut policy = Vec::new();
+        if let Some(ceiling) = runtime.get("maxToolStepsCeiling").and_then(Value::as_i64) {
+            policy.push(format!("ceiling {ceiling}"));
+        }
+        // A session's own limit is the operator's number, so it is a hard cap:
+        // progress-based extension applies to the configured default only.
+        if session.max_tool_steps.is_some() {
+            policy.push("hard cap".into());
+        } else if runtime.get("stepExtension").and_then(Value::as_bool) == Some(true) {
+            policy.push("extends on progress".into());
+        }
+        if policy.is_empty() {
+            parts.push(format!("{steps} tool steps"));
+        } else {
+            parts.push(format!("{steps} tool steps ({})", policy.join(", ")));
         }
     }
     if let Some(roots) = crate::session::roots_segment(session.workspace.as_deref(), &session.additional_roots) {
@@ -509,9 +524,10 @@ mod tests {
         let status = json!({"runtime": {"maxToolSteps": 32, "maxToolStepsCeiling": 48}});
         let rendered = line(&status, &Session::default(), "/tmp/s.sock");
         assert!(rendered.contains("32 tool steps (ceiling 48)"), "{rendered}");
+        // A session's own number is a hard cap, and the line says so.
         let own = Session { max_tool_steps: Some(6), ..Session::default() };
         let rendered = line(&status, &own, "/tmp/s.sock");
-        assert!(rendered.contains("6 tool steps (ceiling 48)"), "{rendered}");
+        assert!(rendered.contains("6 tool steps (ceiling 48, hard cap)"), "{rendered}");
     }
 
     /// A Codex model's line names the effort its next turn runs at: the

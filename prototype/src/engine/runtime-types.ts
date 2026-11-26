@@ -28,6 +28,7 @@ import type {
   ConfirmBudgetCeiling,
   SpendBaselines,
 } from "../budget/mod.ts";
+import type { StepStopReason } from "./step-budget.ts";
 import type {
   CommandDefinition,
   ConfirmToolApproval,
@@ -244,7 +245,7 @@ export interface WorkbenchRuntimeInput extends WorkbenchRuntimeRequest {
   permissionLevel?: PermissionLevel;
   /**
    * Maximum model↔tool loop steps in one turn, resolved at the boundary from
-   * startup config. The config loader accepts integers from 1 through 64; the
+   * startup config. The config loader accepts integers from 1 through 256; the
    * runtime clamps direct integer inputs to that range and falls back to its
    * valid default for non-integer or non-finite direct inputs.
    */
@@ -257,6 +258,22 @@ export interface WorkbenchRuntimeInput extends WorkbenchRuntimeRequest {
    * request above it before the turn starts.
    */
   maxToolStepsCeiling?: number;
+  /**
+   * Whether a turn making forward progress may step past its soft step limit
+   * toward the ceiling (config: `[agent] step_extension` /
+   * `DYFJ_STEP_EXTENSION`, resolved at the boundary). Absent or false keeps
+   * the soft limit as the hard one, which is the behaviour before it existed.
+   */
+  stepExtension?: boolean;
+  /**
+   * The `maxToolSteps` above is the operator's own for this session
+   * (`--tool-steps N`, `/steps N`, or a turn request's `maxToolSteps`) rather
+   * than the configured default. A session's own limit is a hard cap: the
+   * operator named the number they want, so progress-based extension does not
+   * apply and the turn stops there. Set by the transport when it resolves a
+   * request's own limit; never inferred from the value.
+   */
+  toolStepsOverride?: boolean;
   /**
    * Default budget limits (the engine's startup posture), resolved once at the
    * boundary from the declared config surface (DYFJ_BUDGET_* via
@@ -301,9 +318,14 @@ export interface NativeWorkbenchRuntimeResult extends NativeTurnReceipt {
   };
   agent: {
     toolStepsUsed: number;
+    /** The step count the turn may reach, after any extension. */
     maxToolSteps: number;
     limitReached: boolean;
     handoff?: "model" | "notice";
+    /** The configured soft limit, before any extension. */
+    softToolSteps?: number;
+    /** Why tool use ended when the step budget stopped it. */
+    stepStopReason?: StepStopReason;
     autoApprovals: AutoApprovals;
   };
   validation?: WorkbenchValidationSummary;

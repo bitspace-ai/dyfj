@@ -126,14 +126,14 @@ describe("--tool-steps and /steps through the launcher's TypeScript REPL", () =>
       assert.deepStrictEqual(seen, [2, 4]);
 
       const refused = await launch(
-        ["--socket", sock, "--tool-steps", "65"],
+        ["--socket", sock, "--tool-steps", "257"],
         ["never sent"],
         home,
       );
       assert.strictEqual(refused.code, 2, refused.stderr);
       assert.ok(
         refused.stderr.includes(
-          "--tool-steps must be an integer from 1 through 64",
+          "--tool-steps must be an integer from 1 through 256",
         ),
         refused.stderr,
       );

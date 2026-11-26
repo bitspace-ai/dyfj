@@ -115,8 +115,20 @@ export interface NativeTurnReceipt {
   /** Agent-loop usage for this turn; provider calls and parallel tool calls are distinct. */
   agent: {
     toolStepsUsed: number;
+    /** The step count the turn may reach, after any extension. */
     maxToolSteps: number;
     limitReached: boolean;
+    /**
+     * The configured soft step limit, before any extension. Absent from a
+     * runtime that predates the progress-aware step budget.
+     */
+    softToolSteps?: number;
+    /**
+     * Why the step budget stopped tool use: a stall, the ceiling, or spent
+     * spend. Absent when the model ended the turn itself, and from a runtime
+     * that predates the progress-aware step budget.
+     */
+    stepStopReason?: "ceiling" | "stall" | "budget";
     /**
      * How a turn that reached the limit left its handoff: "model" when the
      * handoff call answered, "notice" when the runtime wrote a notice of the

@@ -37,7 +37,7 @@ usage: dyfj-repl [--model <slug>] [--approve-paid] [--fast] [--effort <level>] [
   --effort <level>  this session's reasoning effort: low, medium, high or xhigh, on a model
                     whose catalog row supports effort control (default: the model's own, or
                     the runtime's [codex] reasoning_effort on the Codex route, else medium)
-  --tool-steps <N>  this session's tool-step limit, 1 through 64 and not above the runtime's ceiling
+  --tool-steps <N>  this session's tool-step limit, 1 through 256 and not above the runtime's ceiling
   --budget-turn, --budget-session, --budget-day, --budget-per-call, --budget-runaway <usd>
                     this session's spend limits (default: the runtime's [budget] config);
                     runaway is spend with no tool progress
@@ -218,10 +218,10 @@ mod tests {
         assert_eq!(session.max_tool_steps, Some(12));
         // The flag is in the turn body this session builds.
         assert_eq!(session.turn_body("hi", "t")["maxToolSteps"], 12);
-        for value in ["0", "65", "x", "1.5"] {
+        for value in ["0", "257", "x", "1.5"] {
             assert_eq!(
                 super::parse_args(&args(&["--tool-steps", value]), env(&[]), None).unwrap_err(),
-                "--tool-steps must be an integer from 1 through 64",
+                "--tool-steps must be an integer from 1 through 256",
                 "{value}"
             );
         }

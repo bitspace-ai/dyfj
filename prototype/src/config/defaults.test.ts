@@ -158,7 +158,8 @@ const env = (map: Record<string, string> = {}) => new MapEnv(map);
       defaultTurnBudgetUsd: 4.0,
       defaultRunawayStallUsd: 0.5,
       maxToolSteps: 32,
-      maxToolStepsCeiling: 64,
+      maxToolStepsCeiling: 128,
+      stepExtension: true,
     });
   });
 
@@ -188,6 +189,7 @@ const env = (map: Record<string, string> = {}) => new MapEnv(map);
         defaultRunawayStallUsd: 0.6,
         maxToolSteps: 8,
         maxToolStepsCeiling: 12,
+        stepExtension: true,
       },
     );
   });

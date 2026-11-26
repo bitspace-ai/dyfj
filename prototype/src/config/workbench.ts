@@ -50,6 +50,7 @@ import {
   readIntegerEnv,
   readMaxToolSteps,
   readPositiveUsd,
+  readStepExtension,
   RETIRED_ANOMALY_REPLACEMENT,
   validateLevel,
   validateMaxToolSteps,
@@ -104,6 +105,12 @@ export interface WorkbenchConfig {
   maxToolSteps: number;
   /** The highest tool-step limit a session may set for itself. */
   maxToolStepsCeiling: number;
+  /**
+   * Whether a turn making forward progress may step past its soft limit
+   * toward the ceiling ([agent] step_extension / DYFJ_STEP_EXTENSION).
+   * Off restores the old fixed limit exactly.
+   */
+  stepExtension: boolean;
   /**
    * The reasoning effort a Codex ChatGPT turn runs at when the turn names
    * none ([codex] reasoning_effort / DYFJ_CODEX_REASONING_EFFORT). Null
@@ -186,6 +193,7 @@ export const CONFIG_DEFAULTS: WorkbenchConfig = {
   defaultRunawayStallUsd: schemaNumberDefault("defaultRunawayStallUsd"),
   maxToolSteps: schemaNumberDefault("maxToolSteps"),
   maxToolStepsCeiling: schemaNumberDefault("maxToolStepsCeiling"),
+  stepExtension: schemaBooleanDefault("stepExtension"),
   codexReasoningEffort: null,
   codexWorkbenchTools: true,
   codexOperatorContext: true,
@@ -386,6 +394,11 @@ function applyEnvLayer(config: WorkbenchConfig, env: Env): void {
     config.maxToolSteps,
     config.maxToolStepsCeiling,
   );
+  config.stepExtension = readStepExtension(
+    env,
+    schemaEnvVar("stepExtension"),
+    config.stepExtension,
+  );
   const envCompressionTrigger = env.get(
     schemaEnvVar("compressionTriggerTokens"),
   );
@@ -540,6 +553,14 @@ export async function loadConfig(
         fileCeiling,
         `${configLabel(path)} [agent].max_tool_steps_ceiling`,
       );
+    }
+    const fileStepExtension = readBoolean(
+      table,
+      "agent",
+      "step_extension",
+    );
+    if (fileStepExtension !== undefined) {
+      config.stepExtension = fileStepExtension;
     }
   }
 

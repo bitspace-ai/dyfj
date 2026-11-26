@@ -23,6 +23,7 @@ import {
   runTurn,
   systemMessage,
 } from "../../testing/builders/engine.ts";
+import { MAX_TOOL_STEPS } from "./open-session.ts";
 import type { ScriptedExchange } from "../../testing/fakes/scripted-http-transport.ts";
 import {
   SONNET_55_FINAL,
@@ -31,7 +32,10 @@ import {
 } from "../../testing/fixtures/anthropic-thinking.ts";
 import { AGENT_DEFAULTS, resolveRuntimeEnvDefaults } from "../config/mod.ts";
 import { MapEnv } from "../../testing/fakes/map-env.ts";
-import { HANDOFF_OUTPUT_TOKENS, hasHandoffLabels } from "./agent-loop.ts";
+import {
+  HANDOFF_OUTPUT_TOKENS,
+  hasHandoffLabels,
+} from "./step-limit-handoff.ts";
 
 /** A reply in the shape the handoff instruction asks for. */
 const HANDOFF_REPLY =
@@ -159,6 +163,10 @@ test("agent loop honors a configured small step limit and asks for a no-tools ha
   const { run, frames, result } = await loopTurn([loop, loop, loop], {
     prompt: "loop without stopping",
     maxToolSteps: 2,
+    // This test is about the fixed limit itself, so extension is off: with it
+    // on, a turn whose steps all repeat would still extend once (`step-budget
+    // .component.test.ts` covers the progress-aware behaviour).
+    stepExtension: false,
   });
   // The handoff reply carried a tool call too; it is dropped, not run.
   assert.deepStrictEqual(result?.text, HANDOFF_REPLY);
@@ -173,6 +181,8 @@ test("agent loop honors a configured small step limit and asks for a no-tools ha
     maxToolSteps: 2,
     limitReached: true,
     handoff: "model",
+    // Extension is off: the fixed limit ends the turn exactly as it always
+    // did, with no budget decision to report.
     autoApprovals: { allowlist: 0, sessionGrant: 0 },
   });
   // The handoff call offers no tools, asks for the handoff, and caps output.
@@ -250,7 +260,7 @@ test("an in-process caller cannot run past the configured tool-step ceiling", as
 for (
   const [provided, expected] of [
     [-2, 1],
-    [65, 64],
+    [1_000, MAX_TOOL_STEPS],
     [1.5, AGENT_DEFAULTS.maxToolSteps],
   ] as const
 ) {
@@ -487,7 +497,7 @@ test("a failed handoff call ends the turn on a notice of its last tool calls", a
     loopTurn([
       ...toolSteps(AGENT_DEFAULTS.maxToolSteps),
       { respond: { status: 500, body: sentinel } },
-    ], { prompt: "loop until the limit" })
+    ], { prompt: "loop until the limit", stepExtension: false })
   );
   const { error, frames, result } = loop.value;
   assert.strictEqual(error, null);
@@ -546,7 +556,7 @@ test("contains a failed overflow-recovery call after the tool-step limit", async
         }),
         { respond: { status: 500, body: sentinel } },
       ],
-      { prompt: "loop until the limit" },
+      { prompt: "loop until the limit", stepExtension: false },
       (run) => {
         run.services.recoverContextOverflow = () =>
           Promise.resolve({
@@ -1412,6 +1422,7 @@ describe("a two-tool-step Claude Sonnet 5.5 turn", () => {
           prompt: "first heading?",
           defaultCompanionModel: SONNET_55.slug,
           maxToolSteps: 1,
+          stepExtension: false,
           approver: {
             confirmPaidEscalation: () =>
               Promise.resolve({ decision: "approve" as const }),
@@ -1577,7 +1588,7 @@ test("a handoff reply that carries on with the task ends on the runtime's notice
     loopTurn([
       ...toolSteps(2),
       chatReply({ content: ignored }),
-    ], { prompt: "read three files", maxToolSteps: 2 })
+    ], { prompt: "read three files", maxToolSteps: 2, stepExtension: false })
   );
   const { error, frames, result } = loop.value;
   assert.strictEqual(error, null);
@@ -1666,6 +1677,7 @@ async function pricedHandoffTurn(
       defaultCompanionModel: PRICED_LOOP.slug,
       defaultPerCallBudgetUsd: 0.2,
       maxToolSteps: 1,
+      stepExtension: false,
       approver,
       ...input,
       frames: { onRuntimeEvent: (event) => void frames.push(event) },
@@ -1751,6 +1763,7 @@ describe("the step-limit handoff behind the per-call budget gates", () => {
       loopTurn([toolReply([LIST("c1")]), chatReply({ content: "unsent" })], {
         prompt: "explore",
         maxToolSteps: 1,
+        stepExtension: false,
         abortSignal: abort.signal,
         frames: {
           onRuntimeEvent: (event) => {
@@ -1812,6 +1825,7 @@ test("a turn at the step limit lists its handoff call as a step", async () => {
   const { result } = await loopTurn([loop, loop, loop], {
     prompt: "loop without stopping",
     maxToolSteps: 2,
+    stepExtension: false,
   });
   assert.deepStrictEqual(
     result!.tokens.steps!.map((step) => [step.order, step.purpose]),

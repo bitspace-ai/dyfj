@@ -1177,7 +1177,27 @@ describe("REPL /steps command", () => {
     await handleReplStepsCommand("/steps 48", config, io, connect(RUNTIME));
     assert.strictEqual(config.toolSteps, 48);
     assert.strictEqual(stderr[0], "tool-step limit: 48 (ceiling 48)");
-    assert.ok(stderr[1].endsWith(" · 48 tool steps (ceiling 48)"), stderr[1]);
+    assert.ok(
+      stderr[1].endsWith(" · 48 tool steps (ceiling 48, hard cap)"),
+      stderr[1],
+    );
+  });
+
+  it("/steps N prints a hard cap even where the runtime extends on progress", async () => {
+    const { io, stderr } = fakeIo();
+    const config = cfg();
+    await handleReplStepsCommand(
+      "/steps 48",
+      config,
+      io,
+      connect({ ...RUNTIME, stepExtension: true }),
+    );
+    assert.strictEqual(config.toolSteps, 48);
+    assert.ok(
+      stderr[1].endsWith(" · 48 tool steps (ceiling 48, hard cap)"),
+      stderr[1],
+    );
+    assert.strictEqual(stderr[1].includes("extends on progress"), false);
   });
 
   it("/steps refuses a value above the ceiling and keeps the limit", async () => {
@@ -1190,7 +1210,7 @@ describe("REPL /steps command", () => {
     ]);
   });
 
-  for (const line of ["/steps 0", "/steps 65", "/steps x", "/steps 2 3"]) {
+  for (const line of ["/steps 0", "/steps 257", "/steps x", "/steps 2 3"]) {
     it(`${line} prints the usage and keeps the limit`, async () => {
       const { io, stderr } = fakeIo();
       const config = cfg();

@@ -284,7 +284,7 @@ const table = (t: Record<string, unknown>) => () => t;
     assert.strictEqual(cfg.maxToolSteps, 12);
   });
 
-  for (const value of [0, -1, 1.5, 65]) {
+  for (const value of [0, -1, 1.5, 257]) {
     test(`loadConfig agent tool-step limit: rejects invalid TOML max_tool_steps ${value}`, async () => {
       assert.match(
         (await captureRejection(() =>
@@ -294,7 +294,7 @@ const table = (t: Record<string, unknown>) => () => t;
             parseToml: table({ agent: { max_tool_steps: value } }),
           })
         ) as Error).message,
-        /max tool steps|integer from 1 through 64/,
+        /max tool steps|integer from 1 through 256/,
       );
     });
   }
@@ -397,9 +397,9 @@ const table = (t: Record<string, unknown>) => () => t;
     }
   });
 
-  test("loadConfig agent tool-step ceiling: defaults to 64; TOML and env layers override it with env precedence", async () => {
+  test("loadConfig agent tool-step ceiling: defaults to 128; TOML and env layers override it with env precedence", async () => {
     const cfg = await loadConfig({ env: env(HOME), readTextFile: notFound });
-    assert.strictEqual(cfg.maxToolStepsCeiling, 64);
+    assert.strictEqual(cfg.maxToolStepsCeiling, 128);
     const fileCfg = await loadConfig({
       env: env(HOME),
       readTextFile: present,
@@ -426,7 +426,7 @@ const table = (t: Record<string, unknown>) => () => t;
     );
   });
 
-  for (const value of [0, 1.5, 65]) {
+  for (const value of [0, 1.5, 257]) {
     test(`loadConfig agent tool-step ceiling: rejects invalid TOML max_tool_steps_ceiling ${value}`, async () => {
       assert.match(
         (await captureRejection(() =>
@@ -436,12 +436,12 @@ const table = (t: Record<string, unknown>) => () => t;
             parseToml: table({ agent: { max_tool_steps_ceiling: value } }),
           })
         ) as Error).message,
-        /max_tool_steps_ceiling.*integer from 1 through 64/,
+        /max_tool_steps_ceiling.*integer from 1 through 256/,
       );
     });
   }
 
-  for (const value of ["0", "-1", "1.5", "many", "65"]) {
+  for (const value of ["0", "-1", "1.5", "many", "257"]) {
     test(`loadConfig agent tool-step limit: rejects invalid env max tool steps ${value}`, async () => {
       assert.match(
         (await captureRejection(() =>
@@ -450,7 +450,7 @@ const table = (t: Record<string, unknown>) => () => t;
             readTextFile: notFound,
           })
         ) as Error).message,
-        /max tool steps|integer from 1 through 64/,
+        /max tool steps|integer from 1 through 256/,
       );
     });
   }

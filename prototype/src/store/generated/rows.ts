@@ -43,6 +43,7 @@ export const EVENT_TYPE_VALUES = [
   "approval_parked",
   "approval_resolved",
   "dispatch_started",
+  "step_budget",
 ] as const;
 export type EventType = (typeof EVENT_TYPE_VALUES)[number];
 

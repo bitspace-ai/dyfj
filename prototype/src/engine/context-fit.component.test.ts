@@ -939,7 +939,9 @@ test("a result before a forced conclusion is sized against the request without t
       toolReply([READ("c1", "notes.md")]),
       chatReply({ content: CONCLUDED }),
     ],
-    { maxToolSteps: 1 },
+    // Extension off: this test is about the forced conclusion at a fixed
+    // one-step cap, not about a productive turn extending past it.
+    { maxToolSteps: 1, stepExtension: false },
     {
       files: { "notes.md": notes },
       models: [{ ...LOCAL_MODEL, context_window: 12_000 }],
