@@ -8,9 +8,10 @@ import { fetchSessionPosture, formatPostureLine } from "../posture.ts";
 
 /**
  * `/steps` shows the session's tool-step limit; `/steps N` sets it for the
- * rest of the session. A value above the runtime's ceiling is refused and the
- * limit stays as it was. The runtime checks every turn again, because its
- * ceiling can change when it restarts.
+ * rest of the session as a hard cap, so the posture line says so rather than
+ * claiming the turn extends on progress. A value above the runtime's ceiling
+ * is refused and the limit stays as it was. The runtime checks every turn
+ * again, because its ceiling can change when it restarts.
  */
 export async function handleReplStepsCommand(
   line: string,
@@ -58,6 +59,14 @@ export async function handleReplStepsCommand(
   }
   config.toolSteps = steps;
   io.err(show(steps));
-  io.err(formatPostureLine({ ...posture, maxToolSteps: steps }));
+  // A session's own number is a hard cap: progress-based extension applies to
+  // the configured default, so the posture line must not advertise it here.
+  io.err(
+    formatPostureLine({
+      ...posture,
+      maxToolSteps: steps,
+      toolStepsOverride: true,
+    }),
+  );
   return true;
 }
