@@ -5,22 +5,41 @@
  * from the single-file provider module with `export` keywords added; since
  * then `detectUnparsedToolCallMarkup` also counts function elements in
  * complete blocks left unrun, pinned by fixtures from captured model replies
- * (BIT-564). Refactor it only with fixture coverage from real captured model
- * outputs.
+ * (BIT-564), and the DeepSeek DSML dialect joins the Qwen one as a second
+ * recoverable spelling (`dsml-tool-calls.ts`, BIT-991). Refactor it only with
+ * fixture coverage from real captured model outputs.
  */
-import {
-  canonicalJson,
-  MAX_CANONICAL_JSON_CHARACTERS,
-  MAX_CANONICAL_JSON_DEPTH,
-  MAX_CANONICAL_JSON_ENTRIES,
-} from "../../kernel/mod.ts";
+import { canonicalJson } from "../../kernel/mod.ts";
 import type {
   WorkbenchToolCall,
   WorkbenchToolDefinition,
   WorkbenchTurnResult,
 } from "../types.ts";
-import { MAX_OPENAI_RESPONSE_BYTES } from "./response-bounds.ts";
+import {
+  countUnparsedDsmlMarkup,
+  DSML_MARKER_COUNTS,
+  dsmlPossibleStart,
+  dsmlRecoverableStart,
+  dsmlTruncatedBlockStart,
+  extractDsmlToolCalls,
+} from "./dsml-tool-calls.ts";
+import { coerceToolArgument } from "./text-markup-arguments.ts";
+import {
+  MAX_DSML_MARKUP_TOKENS,
+  MAX_TEXT_TOOL_MARKUP_CANDIDATES,
+  MAX_TEXT_TOOL_WRAPPER_WHITESPACE,
+  MAX_UNPARSED_TOOL_CALL_MARKERS,
+  MAX_UNPARSED_TOOL_CALL_SCAN_CHARACTERS,
+} from "./text-markup-bounds.ts";
 import { toolWireNames } from "./tool-names.ts";
+
+export {
+  MAX_DSML_MARKUP_TOKENS,
+  MAX_TEXT_TOOL_MARKUP_CANDIDATES,
+  MAX_UNPARSED_TOOL_CALL_MARKERS,
+  MAX_UNPARSED_TOOL_CALL_SCAN_CHARACTERS,
+} from "./text-markup-bounds.ts";
+export { toolArgumentWithinBudget } from "./text-markup-arguments.ts";
 
 export function canonicalToolCallSignature(
   call: WorkbenchToolCall,
@@ -33,47 +52,61 @@ export function canonicalToolCallSignature(
 
 const TEXT_FUNCTION_RE = /<function=([^>\s]+)\s{0,32}>([\s\S]*?)<\/function>/g;
 const TEXT_PARAM_RE = /<parameter=([^>\s]+)\s*>([\s\S]*?)<\/parameter>/g;
-const MAX_TEXT_TOOL_WRAPPER_WHITESPACE = 32;
-export const MAX_TEXT_TOOL_MARKUP_CANDIDATES = 64;
 export const TEXT_FUNCTION_MARKER = "<function=";
 export const TEXT_PARAMETER_MARKER = "<parameter=";
 const TEXT_FUNCTION_CLOSING = "</function>";
 const UNPARSED_TOOL_CALL_OPENING = "<tool_call>";
 const UNPARSED_TOOL_CALL_CLOSING = "</tool_call>";
-export const MAX_UNPARSED_TOOL_CALL_MARKERS = 64;
-/**
- * Equal-valued character bound for the OpenAI adapter's 4 MiB response-byte
- * ceiling. UTF-8 decoding cannot produce more UTF-16 code units than input
- * bytes, and JSON unescaping only contracts the representation, so model text
- * from an accepted response fits this whole-text bound.
- */
-export const MAX_UNPARSED_TOOL_CALL_SCAN_CHARACTERS = MAX_OPENAI_RESPONSE_BYTES;
+const TEXT_TOOL_WRAPPER_OPENING = "<tool_call>";
+const TEXT_TOOL_WRAPPER_CLOSING = "</tool_call>";
+
+/** One recovered unit of markup: a span to remove and the calls it carried. */
+interface RecoveredTextBlock {
+  start: number;
+  end: number;
+  calls: { name: string; arguments: Record<string, unknown> }[];
+}
 
 /**
  * Detect tool-call markup that remains in the text after textual-call
- * recovery, and so ran no tool. Two shapes count:
+ * recovery, and so ran no tool. Two dialects count, each in the shapes that
+ * mean structure rather than prose:
  *
- * - a function element in a complete block: a `<function=NAME>` opening
- *   followed by `</function>` inside a `<tool_call>` wrapper that then
- *   closes. Recovery removes every block it runs, so an element left behind
- *   went unrun: no tools were offered (a forced conclusion), the name was not
- *   offered, or its arguments were unrecoverable;
- * - the degraded Qwen-compatible shape: at least two exact wrapper openings
- *   left unmatched by closings. One stray opening is not structural evidence.
+ * - Qwen `<tool_call>`: a function element in a complete block (a
+ *   `<function=NAME>` opening followed by `</function>` inside a `<tool_call>`
+ *   wrapper that then closes), or at least two exact wrapper openings left
+ *   unmatched by closings. One stray opening is not structural evidence.
+ * - DeepSeek DSML: each whole `calls` / `function_calls` block left in the
+ *   text, and each such block the text cuts off once it has revealed DSML
+ *   structure past its opening.
  *
- * A balanced wrapper with no function element stays prose. Markers are
- * processed in order, so a closing matches only the latest preceding open
- * wrapper; leading closings cannot cancel later openings. Each open wrapper
- * owns the function evidence found directly inside it, so an element counts
- * once, toward the innermost wrapper, whatever the order of nesting; a
- * function element a wrapper close interrupts counts nothing. Inputs beyond
- * the accepted-response bound are not prefix-classified; the whole-text scan
- * is linear and the reported count remains bounded.
+ * For either dialect a balanced wrapper with no element inside stays prose.
+ * Markers are processed in order, so a closing matches only the latest
+ * preceding open wrapper; leading closings cannot cancel later openings. Each
+ * open Qwen wrapper owns the function evidence found directly inside it, so an
+ * element counts once, toward the innermost wrapper, whatever the order of
+ * nesting; a function element a wrapper close interrupts counts nothing.
+ * Inputs beyond the accepted-response bound are not prefix-classified; the
+ * whole-text scan is linear and the reported count remains bounded.
  */
 export function detectUnparsedToolCallMarkup(
   text: string,
 ): WorkbenchTurnResult["unparsedToolCallMarkup"] {
   if (text.length > MAX_UNPARSED_TOOL_CALL_SCAN_CHARACTERS) return undefined;
+  const qwen = countUnparsedQwenMarkup(text);
+  const dsml = countUnparsedDsmlMarkup(text);
+  const count = qwen.count + dsml.count;
+  if (count === 0) return undefined;
+  return {
+    count: Math.min(count, MAX_UNPARSED_TOOL_CALL_MARKERS),
+    countIsLowerBound: count > MAX_UNPARSED_TOOL_CALL_MARKERS ||
+      qwen.countIsLowerBound || dsml.countIsLowerBound,
+  };
+}
+
+function countUnparsedQwenMarkup(
+  text: string,
+): { count: number; countIsLowerBound: boolean } {
   const openWrappers: OpenToolCallWrapper[] = [];
   let unrunFunctionCount = 0;
   let openingAt = text.indexOf(UNPARSED_TOOL_CALL_OPENING);
@@ -124,7 +157,7 @@ export function detectUnparsedToolCallMarkup(
     ? openWrappers.length
     : 0;
   const count = unrunFunctionCount + unmatchedOpeningCount;
-  if (count === 0) return undefined;
+  if (count === 0) return { count: 0, countIsLowerBound: false };
   return {
     count: Math.min(count, MAX_UNPARSED_TOOL_CALL_MARKERS),
     countIsLowerBound: count > MAX_UNPARSED_TOOL_CALL_MARKERS,
@@ -180,6 +213,7 @@ function isTextFunctionOpening(text: string, at: number): boolean {
 function exceedsTextToolMarkupCandidateLimit(
   text: string,
   marker: string,
+  limit: number,
 ): boolean {
   let count = 0;
   let searchFrom = 0;
@@ -187,124 +221,122 @@ function exceedsTextToolMarkupCandidateLimit(
     const found = text.indexOf(marker, searchFrom);
     if (found < 0) return false;
     count++;
-    if (count > MAX_TEXT_TOOL_MARKUP_CANDIDATES) return true;
+    if (count > limit) return true;
     searchFrom = found + marker.length;
-  }
-}
-
-function exceedsTextToolMarkupCandidateLimits(text: string): boolean {
-  return exceedsTextToolMarkupCandidateLimit(text, TEXT_FUNCTION_MARKER) ||
-    exceedsTextToolMarkupCandidateLimit(text, TEXT_PARAMETER_MARKER);
-}
-
-export function countNewTextToolMarkupCandidates(
-  tail: string,
-  delta: string,
-  marker: string,
-  remaining: number,
-): { count: number; tail: string } {
-  const combined = tail + delta;
-  let count = 0;
-  let searchFrom = 0;
-  for (;;) {
-    const found = combined.indexOf(marker, searchFrom);
-    if (found < 0) break;
-    count++;
-    if (count > remaining) break;
-    searchFrom = found + marker.length;
-  }
-  return {
-    count,
-    tail: combined.slice(-(marker.length - 1)),
-  };
-}
-
-type CoercedParamValue =
-  | { ok: true; value: unknown }
-  | { ok: false };
-
-export function toolArgumentWithinBudget(raw: string): boolean {
-  if (raw.length > MAX_CANONICAL_JSON_CHARACTERS) return false;
-  let depth = 0;
-  let entries = 1;
-  let inString = false;
-  let escaped = false;
-  for (const character of raw) {
-    if (inString) {
-      if (escaped) escaped = false;
-      else if (character === "\\") escaped = true;
-      else if (character === '"') inString = false;
-      continue;
-    }
-    if (character === '"') {
-      inString = true;
-    } else if (character === "{" || character === "[") {
-      depth += 1;
-      entries += 1;
-      if (
-        depth > MAX_CANONICAL_JSON_DEPTH ||
-        entries > MAX_CANONICAL_JSON_ENTRIES
-      ) return false;
-    } else if (character === "}" || character === "]") {
-      depth -= 1;
-    } else if (character === ",") {
-      entries += 1;
-      if (entries > MAX_CANONICAL_JSON_ENTRIES) return false;
-    }
-  }
-  return true;
-}
-
-function coerceParamValue(raw: string): CoercedParamValue {
-  if (!toolArgumentWithinBudget(raw)) return { ok: false };
-  if (raw === "") return { ok: true, value: "" };
-  try {
-    return { ok: true, value: JSON.parse(raw) };
-  } catch {
-    return { ok: true, value: raw };
   }
 }
 
 /**
- * Recover tool calls that a model emitted as text instead of structured
- * tool_calls. Qwen3-Coder (via mlx_lm) frequently leaks its native XML dialect
- * into the content — `<tool_call><function=NAME>…</function></tool_call>` —
- * which the inference server does not parse. Runtime recovery requires the
- * complete explicit wrapper, so unwrapped, incomplete, and unoffered
- * function-like prose is not executable.
+ * Whether the text holds more than `limit` occurrences of the markers taken
+ * together. Markers are separate spellings of one construct, so they share one
+ * budget; none is a prefix of another, so no occurrence is counted twice.
  */
-export function extractTextToolCallsInternal(
+function exceedsTextToolMarkupCandidateLimitsFor(
+  text: string,
+  markers: readonly string[],
+  limit: number,
+): boolean {
+  let count = 0;
+  for (const marker of markers) {
+    let searchFrom = 0;
+    for (;;) {
+      const found = text.indexOf(marker, searchFrom);
+      if (found < 0) break;
+      count++;
+      if (count > limit) return true;
+      // Overlapping occurrences count: adjacent runs share a separator, so
+      // `|DSML|DSML|` holds two markers, and the streaming counter (which
+      // re-reads its carried tail) must agree with this whole-text one.
+      searchFrom = found + 1;
+    }
+  }
+  return false;
+}
+
+function exceedsTextToolMarkupCandidateLimits(text: string): boolean {
+  return exceedsTextToolMarkupCandidateLimit(
+    text,
+    TEXT_FUNCTION_MARKER,
+    MAX_TEXT_TOOL_MARKUP_CANDIDATES,
+  ) ||
+    exceedsTextToolMarkupCandidateLimit(
+      text,
+      TEXT_PARAMETER_MARKER,
+      MAX_TEXT_TOOL_MARKUP_CANDIDATES,
+    ) ||
+    exceedsTextToolMarkupCandidateLimitsFor(
+      text,
+      DSML_MARKER_COUNTS,
+      MAX_DSML_MARKUP_TOKENS,
+    );
+}
+
+/**
+ * Count occurrences of any of `markers` in the delta, carrying the tail one may
+ * straddle. Several spellings of one construct share the count, so the tail is
+ * the longest marker's overlap rather than any single one's.
+ */
+export function countNewTextToolMarkupCandidates(
+  tail: string,
+  delta: string,
+  markers: readonly string[],
+  remaining: number,
+): { count: number; tail: string } {
+  const combined = tail + delta;
+  let count = 0;
+  let longest = 1;
+  for (const marker of markers) {
+    longest = Math.max(longest, marker.length);
+    let searchFrom = 0;
+    for (;;) {
+      const found = combined.indexOf(marker, searchFrom);
+      if (found < 0) break;
+      count++;
+      if (count > remaining) break;
+      // Step one character, so overlapping runs count the same here as in the
+      // whole-text scan; the carried tail is what keeps a marker that straddles
+      // a delta boundary from being counted twice.
+      searchFrom = found + 1;
+    }
+    if (count > remaining) break;
+  }
+  return {
+    count,
+    tail: combined.slice(-(longest - 1)),
+  };
+}
+
+/**
+ * Read the Qwen `<tool_call><function=…>` blocks recovery can run, as spans
+ * over the text. A block is recoverable when the wrapper opens at the function
+ * element, closes after it, and (given the offered names) names an offered
+ * tool.
+ */
+function qwenToolCallBlocks(
   text: string,
   offeredNames?: ReadonlySet<string>,
-  preserveWhitespace = false,
-): {
-  toolCalls: WorkbenchToolCall[];
-  cleaned: string;
-  unrecoverable: boolean;
-} {
-  if (exceedsTextToolMarkupCandidateLimits(text)) {
-    return { toolCalls: [], cleaned: text, unrecoverable: false };
-  }
-  const toolCalls: WorkbenchToolCall[] = [];
+): { blocks: RecoveredTextBlock[]; unrecoverable: boolean } {
+  const blocks: RecoveredTextBlock[] = [];
   let unrecoverable = false;
-  const retained: string[] = [];
-  let retainedThrough = 0;
+  let consumedThrough = 0;
   const fn = new RegExp(TEXT_FUNCTION_RE);
-  const wrapperTag = "<tool_call>";
   let wrapper = -1;
-  let nextWrapper = text.indexOf(wrapperTag);
+  let nextWrapper = text.indexOf(TEXT_TOOL_WRAPPER_OPENING);
   let match: RegExpExecArray | null;
   while ((match = fn.exec(text)) !== null) {
     while (nextWrapper >= 0 && nextWrapper < match.index) {
       wrapper = nextWrapper;
-      nextWrapper = text.indexOf(wrapperTag, nextWrapper + wrapperTag.length);
+      nextWrapper = text.indexOf(
+        TEXT_TOOL_WRAPPER_OPENING,
+        nextWrapper + TEXT_TOOL_WRAPPER_OPENING.length,
+      );
     }
     let hasAssociatedWrapper = false;
-    if (wrapper >= retainedThrough) {
-      let contentStart = wrapper + wrapperTag.length;
+    if (wrapper >= consumedThrough) {
+      let contentStart = wrapper + TEXT_TOOL_WRAPPER_OPENING.length;
       while (
         contentStart < match.index &&
-        contentStart - (wrapper + wrapperTag.length) <
+        contentStart - (wrapper + TEXT_TOOL_WRAPPER_OPENING.length) <
           MAX_TEXT_TOOL_WRAPPER_WHITESPACE &&
         text[contentStart].trim().length === 0
       ) {
@@ -320,7 +352,10 @@ export function extractTextToolCallsInternal(
     ) {
       closingStart++;
     }
-    const hasClosingWrapper = text.startsWith("</tool_call>", closingStart);
+    const hasClosingWrapper = text.startsWith(
+      TEXT_TOOL_WRAPPER_CLOSING,
+      closingStart,
+    );
     if (
       offeredNames !== undefined &&
       (
@@ -337,7 +372,7 @@ export function extractTextToolCallsInternal(
     let p: RegExpExecArray | null;
     let recoverable = true;
     while ((p = params.exec(match[2])) !== null) {
-      const value = coerceParamValue(p[2].trim());
+      const value = coerceToolArgument(p[2].trim());
       if (!value.ok) {
         recoverable = false;
         break;
@@ -349,26 +384,103 @@ export function extractTextToolCallsInternal(
       wrapper = -1;
       continue;
     }
-    toolCalls.push({
-      id: `text-tool-${toolCalls.length + 1}`,
-      name: match[1],
-      arguments: args,
-    });
     const markupStart = hasAssociatedWrapper ? wrapper : match.index;
     if (hasClosingWrapper) {
-      markupEnd = closingStart + "</tool_call>".length;
+      markupEnd = closingStart + TEXT_TOOL_WRAPPER_CLOSING.length;
     }
-    retained.push(text.slice(retainedThrough, markupStart));
-    retainedThrough = markupEnd;
+    blocks.push({
+      start: markupStart,
+      end: markupEnd,
+      calls: [{ name: match[1], arguments: args }],
+    });
+    consumedThrough = markupEnd;
     wrapper = -1;
   }
-  if (unrecoverable || toolCalls.length === 0) {
-    return { toolCalls: [], cleaned: text, unrecoverable };
+  return { blocks, unrecoverable };
+}
+
+/**
+ * Recover tool calls that a model emitted as text instead of structured
+ * tool_calls, in either dialect it is known to leak: the Qwen
+ * `<tool_call><function=NAME>…</function></tool_call>` block and the DeepSeek
+ * DSML block (`dsml-tool-calls.ts`). Runtime recovery requires the complete
+ * explicit wrapper of whichever dialect, so unwrapped, incomplete, and
+ * unoffered function-like prose is not executable. The recovered calls come
+ * back in the order their markup appeared, and the returned text is the input
+ * with those spans removed.
+ */
+export function extractTextToolCallsInternal(
+  text: string,
+  offeredNames?: ReadonlySet<string>,
+  preserveWhitespace = false,
+): {
+  toolCalls: WorkbenchToolCall[];
+  cleaned: string;
+  unrecoverable: boolean;
+  /**
+   * The Qwen reading failed closed: an offered call's arguments could not be
+   * typed, so no Qwen call was returned and the Qwen markup is still in
+   * `cleaned`. A caller that reads a suffix must know this, because a complete
+   * Qwen block retained here is *not* an incomplete call the reply cut off.
+   */
+  qwenUnrecoverable: boolean;
+} {
+  if (exceedsTextToolMarkupCandidateLimits(text)) {
+    return {
+      toolCalls: [],
+      cleaned: text,
+      unrecoverable: false,
+      qwenUnrecoverable: false,
+    };
+  }
+  const qwen = qwenToolCallBlocks(text, offeredNames);
+  const dsml = extractDsmlToolCalls(text, offeredNames);
+  // A Qwen block whose arguments could not be read fails the whole Qwen
+  // reading closed: the caller gets no Qwen call and the Qwen markup stays in
+  // the text, so a reply that offered a call the reader could not type is
+  // never half-executed. The DSML dialect is read independently, so a block it
+  // can recover whole is still recovered.
+  const blocks = [...(qwen.unrecoverable ? [] : qwen.blocks), ...dsml.removals]
+    .sort((a, b) => a.start - b.start);
+  const unrecoverable = qwen.unrecoverable || dsml.unrecoverable;
+  const kept: RecoveredTextBlock[] = [];
+  let through = 0;
+  for (const block of blocks) {
+    if (block.start < through) continue;
+    kept.push(block);
+    through = block.end;
+  }
+  if (kept.length === 0) {
+    return {
+      toolCalls: [],
+      cleaned: text,
+      unrecoverable,
+      qwenUnrecoverable: qwen.unrecoverable,
+    };
+  }
+  const retained: string[] = [];
+  let retainedThrough = 0;
+  for (const block of kept) {
+    retained.push(text.slice(retainedThrough, block.start));
+    retainedThrough = block.end;
   }
   retained.push(text.slice(retainedThrough));
   const retainedText = retained.join("");
-  const cleaned = preserveWhitespace ? retainedText : retainedText.trim();
-  return { toolCalls, cleaned, unrecoverable: false };
+  const calls = kept.flatMap((block) => block.calls);
+  return {
+    toolCalls: calls.map((call, index) => ({
+      id: `text-tool-${index + 1}`,
+      name: call.name,
+      arguments: call.arguments,
+    })),
+    cleaned: preserveWhitespace ? retainedText : retainedText.trim(),
+    // A DSML block that recovered does not make an unreadable Qwen reply
+    // recoverable: `unrecoverable` speaks for the whole reply, and the caller
+    // is told about the Qwen failure separately so it can leave that markup
+    // alone.
+    unrecoverable: false,
+    qwenUnrecoverable: qwen.unrecoverable,
+  };
 }
 
 export function extractTextToolCalls(
@@ -382,18 +494,37 @@ export function extractTextToolCalls(
   return { toolCalls, cleaned };
 }
 
-function textToolMarkupStart(
+/** The earliest DSML markup the reader may withhold from, or -1. */
+export function dsmlPossibleMarkupStart(
+  text: string,
+  tools: WorkbenchToolDefinition[] | undefined,
+): number {
+  if (!tools || tools.length === 0) return -1;
+  return dsmlPossibleStart(text, offeredWireNames(tools));
+}
+
+/** The earliest DSML markup a reader can stop withholding for, or -1. */
+export function dsmlRecoverableMarkupStart(
+  text: string,
+  tools: WorkbenchToolDefinition[] | undefined,
+): number {
+  if (!tools || tools.length === 0) return -1;
+  return dsmlRecoverableStart(text, offeredWireNames(tools));
+}
+
+/** The earliest Qwen markup the reader may withhold from, or -1. */
+export function qwenPossibleTextToolMarkupStart(
   text: string,
   tools: WorkbenchToolDefinition[] | undefined,
 ): number {
   if (!tools || tools.length === 0) return -1;
   const offered = toolWireNames(tools).map(({ wire }) => wire);
-  const maxUndecidedPrefix = "<function=".length +
+  const maxUndecidedPrefix = TEXT_FUNCTION_MARKER.length +
     Math.max(...offered.map((name) => name.length)) +
     (2 * MAX_TEXT_TOOL_WRAPPER_WHITESPACE);
-  let wrapper = text.indexOf("<tool_call>");
+  let wrapper = text.indexOf(TEXT_TOOL_WRAPPER_OPENING);
   while (wrapper >= 0) {
-    const rawAfterWrapper = wrapper + "<tool_call>".length;
+    const rawAfterWrapper = wrapper + TEXT_TOOL_WRAPPER_OPENING.length;
     let afterWrapper = rawAfterWrapper;
     while (
       afterWrapper < text.length &&
@@ -414,9 +545,9 @@ function textToolMarkupStart(
     ) {
       if (afterWrapper === text.length) return wrapper;
       const undecided = text.slice(afterWrapper);
-      if ("<function=".startsWith(undecided)) return wrapper;
-      if (text.startsWith("<function=", afterWrapper)) {
-        const functionStart = afterWrapper + "<function=".length;
+      if (TEXT_FUNCTION_MARKER.startsWith(undecided)) return wrapper;
+      if (text.startsWith(TEXT_FUNCTION_MARKER, afterWrapper)) {
+        const functionStart = afterWrapper + TEXT_FUNCTION_MARKER.length;
         let functionEnd = functionStart;
         while (
           functionEnd < text.length &&
@@ -459,23 +590,25 @@ function textToolMarkupStart(
         }
       }
     }
-    wrapper = text.indexOf("<tool_call>", wrapper + 1);
+    wrapper = text.indexOf(TEXT_TOOL_WRAPPER_OPENING, wrapper + 1);
   }
   const partial = text.lastIndexOf("<tool_call");
   return partial >= 0 &&
-      "<tool_call>".startsWith(text.slice(partial))
+      TEXT_TOOL_WRAPPER_OPENING.startsWith(text.slice(partial))
     ? partial
     : -1;
 }
 
-export function possibleTextToolMarkupStart(
-  text: string,
+function offeredWireNames(
   tools: WorkbenchToolDefinition[] | undefined,
-): number {
-  return textToolMarkupStart(text, tools);
+): Set<string> | undefined {
+  return tools && tools.length > 0
+    ? new Set(toolWireNames(tools).map(({ wire }) => wire))
+    : undefined;
 }
 
-export function confirmedTextToolMarkupStart(
+/** The earliest Qwen markup recovery can run, or -1. */
+export function qwenConfirmedMarkupStart(
   text: string,
   tools: WorkbenchToolDefinition[] | undefined,
 ): number {
@@ -484,9 +617,9 @@ export function confirmedTextToolMarkupStart(
   const maxOfferedNameLength = Math.max(
     ...[...offered].map((name) => name.length),
   );
-  let wrapper = text.indexOf("<tool_call>");
+  let wrapper = text.indexOf(TEXT_TOOL_WRAPPER_OPENING);
   while (wrapper >= 0) {
-    const rawOpeningStart = wrapper + "<tool_call>".length;
+    const rawOpeningStart = wrapper + TEXT_TOOL_WRAPPER_OPENING.length;
     let openingStart = rawOpeningStart;
     while (
       openingStart < text.length &&
@@ -497,9 +630,9 @@ export function confirmedTextToolMarkupStart(
     }
     if (
       openingStart - rawOpeningStart <= MAX_TEXT_TOOL_WRAPPER_WHITESPACE &&
-      text.startsWith("<function=", openingStart)
+      text.startsWith(TEXT_FUNCTION_MARKER, openingStart)
     ) {
-      const nameStart = openingStart + "<function=".length;
+      const nameStart = openingStart + TEXT_FUNCTION_MARKER.length;
       let nameEnd = nameStart;
       while (
         nameEnd < text.length &&
@@ -525,7 +658,7 @@ export function confirmedTextToolMarkupStart(
         return wrapper;
       }
     }
-    wrapper = text.indexOf("<tool_call>", wrapper + 1);
+    wrapper = text.indexOf(TEXT_TOOL_WRAPPER_OPENING, wrapper + 1);
   }
   return -1;
 }
@@ -537,9 +670,9 @@ function recognizedIncompleteTextToolMarkupStart(
   if (!tools || tools.length === 0) return -1;
   const offered = toolWireNames(tools).map(({ wire }) => wire);
   const maxOfferedNameLength = Math.max(...offered.map((name) => name.length));
-  let wrapper = text.indexOf("<tool_call>");
+  let wrapper = text.indexOf(TEXT_TOOL_WRAPPER_OPENING);
   while (wrapper >= 0) {
-    const rawOpeningStart = wrapper + "<tool_call>".length;
+    const rawOpeningStart = wrapper + TEXT_TOOL_WRAPPER_OPENING.length;
     let openingStart = rawOpeningStart;
     while (
       openingStart < text.length &&
@@ -550,9 +683,9 @@ function recognizedIncompleteTextToolMarkupStart(
     }
     if (
       openingStart - rawOpeningStart <= MAX_TEXT_TOOL_WRAPPER_WHITESPACE &&
-      text.startsWith("<function=", openingStart)
+      text.startsWith(TEXT_FUNCTION_MARKER, openingStart)
     ) {
-      const nameStart = openingStart + "<function=".length;
+      const nameStart = openingStart + TEXT_FUNCTION_MARKER.length;
       let nameEnd = nameStart;
       while (
         nameEnd < text.length &&
@@ -588,11 +721,21 @@ function recognizedIncompleteTextToolMarkupStart(
         return wrapper;
       }
     }
-    wrapper = text.indexOf("<tool_call>", wrapper + 1);
+    wrapper = text.indexOf(TEXT_TOOL_WRAPPER_OPENING, wrapper + 1);
   }
   return -1;
 }
 
+/**
+ * Strip a trailing text tool call the reply cut off. Recovery removes every
+ * complete block; what remains is stripped only where a delivered reply could
+ * still be holding markup the presenter never forwarded: an incomplete Qwen
+ * call, or a DSML block the text ends inside while the reader would still be
+ * withholding it (`dsmlTruncatedBlockStart`). A block that arrived whole and
+ * simply did not follow the dialect is prose, and prose the presenter already
+ * forwarded is never cut, because the caller's emitted text must be a prefix
+ * of what it returns.
+ */
 export function stripIncompleteTextToolCallSuffix(
   text: string,
   tools: WorkbenchToolDefinition[] | undefined,
@@ -600,18 +743,41 @@ export function stripIncompleteTextToolCallSuffix(
   if (!tools || tools.length === 0) return text;
   if (exceedsTextToolMarkupCandidateLimits(text)) return text;
   const offered = new Set(toolWireNames(tools).map(({ wire }) => wire));
-  const extraction = extractTextToolCallsInternal(
-    text,
-    offered,
-    true,
-  );
-  if (extraction.unrecoverable) return text;
+  const dsmlCut = dsmlTruncatedBlockStart(text, offered);
+  // A withheld DSML block runs to the end of the reply, so nothing after its
+  // start was forwarded - but recovery also removes complete calls that sit
+  // *inside* that withheld span, because it reads each dialect independently of
+  // the other. The withheld suffix is therefore not `text.length - dsmlCut`
+  // characters of the text with complete calls removed; it is shorter by
+  // whatever was removed inside it, which is how the cut once landed inside
+  // forwarded prose or past the start of the string. Strip the prefix alone, so
+  // no removed span can sit past the cut.
+  const source = dsmlCut < 0 ? text : text.slice(0, dsmlCut);
+  return stripCompleteCallsAndIncompleteQwenSuffix(source, tools, offered) ??
+    text;
+}
+
+/**
+ * The delivered text for one span: every complete recovered call removed, then
+ * any trailing incomplete Qwen call. Undefined when recovery found markup it
+ * could not run, which leaves the caller to decide what to deliver.
+ */
+function stripCompleteCallsAndIncompleteQwenSuffix(
+  text: string,
+  tools: WorkbenchToolDefinition[],
+  offered: ReadonlySet<string>,
+): string | undefined {
+  const extraction = extractTextToolCallsInternal(text, offered, true);
+  if (extraction.unrecoverable) return undefined;
   const withoutCompleteCalls = extraction.cleaned;
-  const confirmed = confirmedTextToolMarkupStart(withoutCompleteCalls, tools);
+  // When the Qwen reading failed closed its markup is complete and stays in the
+  // text by design, so there is no incomplete Qwen suffix to cut: reading it as
+  // one would cut a block the presenter already forwarded.
+  if (extraction.qwenUnrecoverable) return withoutCompleteCalls;
+  const confirmed = qwenConfirmedMarkupStart(withoutCompleteCalls, tools);
   const incomplete = confirmed >= 0
     ? confirmed
     : recognizedIncompleteTextToolMarkupStart(withoutCompleteCalls, tools);
-  return incomplete < 0
-    ? withoutCompleteCalls
-    : withoutCompleteCalls.slice(0, incomplete);
+  const qwenKeep = incomplete < 0 ? withoutCompleteCalls.length : incomplete;
+  return withoutCompleteCalls.slice(0, qwenKeep);
 }

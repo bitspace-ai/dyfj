@@ -11,6 +11,81 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **DeepSeek DSML text tool-call markup is recovered, and its markup no longer
+  reaches the operator as prose (`BIT-991`).** A DeepSeek model served through
+  an OpenAI-compatible route sometimes writes its native tool-call markup into
+  the message text instead of a structured `tool_calls` array. That dialect
+  wraps one or more invokes in a `calls` (or `function_calls`) element, and
+  spells every tag as `<`, a separator, `DSML`, the same separator, an optional
+  space, then the element name: a fullwidth vertical bar in the replies
+  captured live, and possibly the ASCII pipe on another tokenizer. The new
+  `providers/shared/dsml-tool-calls.ts` parses that dialect and recovers a
+  complete block whose invokes all name a tool the request offered, so the
+  turn runs the call and strips the markup from the text. An invoke name
+  resolves through the same wire-name mapping as a structured call
+  (`gate_wait` reaches `gate/wait`), a `parameter` marked `string="true"` is
+  literal text kept exactly as written (multiline command lines included, with
+  its own leading and trailing newlines) and budgeted on characters alone,
+  because it is never parsed: its commas and brackets are content, so a long
+  command line or file body is not refused for looking like deep or wide JSON,
+  while one past the canonical-JSON character budget still fails closed. A
+  `parameter` marked `string="false"` is JSON and must parse, so numbers,
+  booleans, objects and arrays arrive typed.
+  `providers/shared/text-tool-calls.ts` composes the two
+  dialects: recovery returns whichever markup came first in the text, and the
+  unparsed-markup count now also reports a DSML block left unrun — a whole
+  block left in the text, or one the reply cuts off once it has revealed DSML
+  structure past its opening, a wrapper opening that never closed but did
+  reveal an invoke name included — rather than treating it as an answer. The
+  streaming presenter withholds a DSML block as it arrives, so the raw markup
+  never flashes to the terminal, and a reply that ends inside a block it was
+  still withholding drops that block from the text instead of showing it. A
+  block that closed but does not follow the dialect is prose, and the reader
+  carries on: a recoverable block later in the same reply is still recovered
+  rather than shown. A closed body recovery does not run as one whole block —
+  malformed, naming a tool the request did not offer, or holding an argument it
+  cannot read — is not shown raw either: the reader releases its first
+  character and re-reads the rest under these same rules, so a complete call
+  inside it is still withheld and recovered, an incomplete one is still
+  withheld until it settles or the reply ends, and a nested block is read as a
+  block. A call nested in markup the reader was withholding is therefore never
+  both run and displayed. The delivery never cuts text it already forwarded:
+  the presenter and the finish strip read one per-candidate decision, so only a
+  block whose first invoke names an offered tool, or one still undecided within
+  its bound, is ever cut. A markup opener a tokenizer splits across deltas is
+  withheld too, including a fragment as short as `<` and the separator run, and
+  the prose after a recovered block is forwarded as it arrives instead of
+  waiting for the stream to end. A block is only withheld while it may still
+  turn out recoverable: once a candidate block has grown past the bound a
+  wrapper and its invoke tag fit in, it is prose and the reader releases it, so
+  markup-shaped text in ordinary prose costs no more than that bound. A
+  candidate reads only the whitespace the dialect allows between a wrapper and
+  its first invoke, rather than searching the rest of the reply for a tag: a
+  wrapper quoted in prose cannot borrow an invoke written further down and hold
+  the text between them back. Every scan stays linear and bounded: the marker
+  counted is the separator-wrapped run that opens a tag, not the bare element
+  name, so a reply that discusses the dialect in prose spends none of the bound
+  and only separator-wrapped runs do, overlapping runs included so the count
+  does not depend on how the reply is chunked; that count is capped at the same
+  per-element candidate limit as the Qwen dialect scaled to that dialect's
+  tokens per element, a withheld block's chunks are held in an array and only a
+  carried tail window plus the newly arrived characters is probed for the close
+  tag, so wall-clock time stays linear across tens of thousands of deltas, the
+  block's end is read once per block rather than once per delta, the presenter
+  scans only the text it has not decided yet rather than the whole reply at
+  each delta, and the whole-text scan keeps the accepted-response bound. The
+  bounds, the argument-budget helper and its coercion moved into
+  `providers/shared/text-markup-bounds.ts` and
+  `providers/shared/text-markup-arguments.ts` so no module in the recovery path
+  grows past the module-size limit. The Qwen `<tool_call>` reading keeps the
+  behavior it had before this dialect joined it, pinned by its existing tests:
+  an offered Qwen call whose arguments cannot be typed still fails that whole
+  reading closed, so no Qwen call from such a reply runs and its markup stays
+  in the text, while a DSML block read independently is still recovered. That
+  retained markup is never mistaken for a call the reply cut off: a finish
+  strip that saw it as an incomplete suffix would cut text the stream already
+  forwarded and fail the turn.
+
 - **Progress-aware tool-step budget (`BIT-992`).** A native turn's tool steps
   were bounded by one fixed number, so a productive turn working through a repo
   was interrupted mid-stride while its dollar budgets were nowhere near spent.

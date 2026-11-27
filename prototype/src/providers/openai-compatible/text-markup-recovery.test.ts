@@ -8,6 +8,16 @@ import { describe, it } from "node:test";
 import { ScriptedHttpTransport } from "../../../testing/fakes/scripted-http-transport.ts";
 import { runWorkbenchTurn } from "../mod.ts";
 import { providerTestModels } from "../../../testing/builders/models.ts";
+import {
+  DSML_BASH_BLOCK,
+  DSML_BASH_COMMAND,
+  DSML_GATE_RUN,
+  DSML_GATE_WAIT_BLOCK,
+  DSML_PROSE,
+  dsmlBlock,
+  dsmlPartialBlock,
+  dsmlTag,
+} from "../../../testing/providers/dsml-fixtures.ts";
 
 const models = [...providerTestModels];
 function sse(chunks: unknown[]): string {
@@ -573,3 +583,336 @@ for (const streamed of [true, false]) {
     });
   });
 }
+
+// DeepSeek models sometimes write their native tool-call markup into the
+// message content instead of a structured `tool_calls` array. The fixtures are
+// two replies captured live from DeepSeek V4.1 Flash 1017 via OpenRouter
+// (2026-11-24) plus the separator, wrapper and gap spellings an upstream
+// tokenizer may vary (BIT-991).
+const dsmlTool = (name: string) => ({
+  name,
+  description: `${name} tool.`,
+  parameters: { type: "object" },
+});
+
+function dsmlTurn(
+  content: string,
+  tools: ReturnType<typeof dsmlTool>[] | undefined,
+  options: { streamed?: boolean; onTextDelta?: (delta: string) => void } = {},
+) {
+  const streamed = options.streamed ?? false;
+  const transport = new ScriptedHttpTransport([{
+    respond: {
+      body: streamed
+        ? sse([
+          { choices: [{ delta: { content } }] },
+          { choices: [{ delta: {}, finish_reason: "stop" }] },
+        ])
+        : JSON.stringify({
+          choices: [{ message: { content }, finish_reason: "stop" }],
+        }),
+    },
+  }]);
+  return {
+    transport,
+    run: () =>
+      runWorkbenchTurn({
+        systemPrompt: "system",
+        prompt: "continue",
+        routing: { modelId: "gemma4:e2b" },
+        models,
+        ...(tools ? { tools } : {}),
+        ...(streamed ? { onTextDelta: options.onTextDelta ?? (() => {}) } : {}),
+        fetchFn: transport.fetch,
+      }),
+  };
+}
+
+describe("DeepSeek DSML textual tool calls", () => {
+  it("recovers the captured bash block in a buffered reply", async () => {
+    const { transport, run } = dsmlTurn(
+      `${DSML_PROSE}\n\n${DSML_BASH_BLOCK}`,
+      [dsmlTool("bash")],
+    );
+    const result = await run();
+    transport.assertDone();
+
+    assert.deepStrictEqual(result.toolCalls, [{
+      id: "text-tool-1",
+      name: "bash",
+      arguments: { command: DSML_BASH_COMMAND },
+    }]);
+    assert.strictEqual(result.text, `${DSML_PROSE}\n\n`);
+    assert.strictEqual(result.unparsedToolCallMarkup, undefined);
+  });
+
+  it("recovers the captured gate_wait block and parses string=false values", async () => {
+    const { transport, run } = dsmlTurn(DSML_GATE_WAIT_BLOCK, [
+      dsmlTool("gate/wait"),
+    ]);
+    const result = await run();
+    transport.assertDone();
+
+    assert.deepStrictEqual(result.toolCalls, [{
+      id: "text-tool-1",
+      name: "gate/wait",
+      arguments: { run: DSML_GATE_RUN, wait_seconds: 60 },
+    }]);
+    assert.strictEqual(result.text, "");
+    assert.strictEqual(result.unparsedToolCallMarkup, undefined);
+  });
+
+  it("resolves a wire-normalized invoke name onto the offered tool", async () => {
+    const { transport, run } = dsmlTurn(DSML_GATE_WAIT_BLOCK, [
+      dsmlTool("gate/wait"),
+      dsmlTool("bash"),
+    ]);
+    const result = await run();
+    transport.assertDone();
+
+    assert.deepStrictEqual(result.toolCalls, [{
+      id: "text-tool-1",
+      name: "gate/wait",
+      arguments: { run: DSML_GATE_RUN, wait_seconds: 60 },
+    }]);
+  });
+
+  it("recovers the tight and ASCII-pipe spellings and the function_calls wrapper", async () => {
+    for (const style of ["tight", "ascii"] as const) {
+      for (const wrapper of ["calls", "function_calls"] as const) {
+        const block = dsmlBlock(
+          style,
+          "list_files",
+          [["path", ' string="true"', "."]],
+          wrapper,
+        );
+        const { transport, run } = dsmlTurn(block, [dsmlTool("list_files")]);
+        const result = await run();
+        transport.assertDone();
+
+        assert.deepStrictEqual(result.toolCalls, [{
+          id: "text-tool-1",
+          name: "list_files",
+          arguments: { path: "." },
+        }], `${style}/${wrapper}`);
+        assert.strictEqual(result.unparsedToolCallMarkup, undefined);
+      }
+    }
+  });
+
+  it("keeps a multiline string=true value literal and JSON-parses the rest", async () => {
+    const command = "line one\nline two\ntail";
+    const block = dsmlBlock("spaced", "bash", [
+      ["command", ' string="true"', command],
+      ["timeoutSec", ' string="false"', "600"],
+      ["login", ' string="false"', "false"],
+      ["env", ' string="false"', '{"A":"1","B":[2,3]}'],
+    ]);
+    const { transport, run } = dsmlTurn(block, [dsmlTool("bash")]);
+    const result = await run();
+    transport.assertDone();
+
+    assert.deepStrictEqual(result.toolCalls, [{
+      id: "text-tool-1",
+      name: "bash",
+      arguments: {
+        command,
+        timeoutSec: 600,
+        login: false,
+        env: { A: "1", B: [2, 3] },
+      },
+    }]);
+  });
+
+  it("recovers multiple DSML calls in one reply, in order", async () => {
+    const block = dsmlBlock("spaced", "list_files", [
+      ["path", ' string="true"', "."],
+    ]);
+    const { transport, run } = dsmlTurn(
+      `${block}\n${DSML_BASH_BLOCK}`,
+      [dsmlTool("list_files"), dsmlTool("bash")],
+    );
+    const result = await run();
+    transport.assertDone();
+
+    assert.deepStrictEqual(result.toolCalls, [{
+      id: "text-tool-1",
+      name: "list_files",
+      arguments: { path: "." },
+    }, {
+      id: "text-tool-2",
+      name: "bash",
+      arguments: { command: DSML_BASH_COMMAND },
+    }]);
+  });
+
+  it("does not run a DSML call naming a tool that was not offered", async () => {
+    const { transport, run } = dsmlTurn(DSML_GATE_WAIT_BLOCK, [
+      dsmlTool("bash"),
+    ]);
+    const result = await run();
+    transport.assertDone();
+
+    assert.strictEqual(result.toolCalls, undefined);
+    assert.strictEqual(result.text, DSML_GATE_WAIT_BLOCK);
+    assert.deepStrictEqual(result.unparsedToolCallMarkup, {
+      count: 1,
+      countIsLowerBound: false,
+    });
+  });
+
+  it("does not run a DSML call when the request offers no tools", async () => {
+    const { transport, run } = dsmlTurn(DSML_BASH_BLOCK, undefined);
+    const result = await run();
+    transport.assertDone();
+
+    assert.strictEqual(result.toolCalls, undefined);
+    assert.strictEqual(result.text, DSML_BASH_BLOCK);
+    assert.deepStrictEqual(result.unparsedToolCallMarkup, {
+      count: 1,
+      countIsLowerBound: false,
+    });
+  });
+
+  it("flags a partial DSML block rather than treating it as prose", async () => {
+    const partial = dsmlPartialBlock("spaced", "bash", [
+      ["command", ' string="true"', DSML_BASH_COMMAND],
+    ]);
+    const { transport, run } = dsmlTurn(partial, [dsmlTool("bash")]);
+    const result = await run();
+    transport.assertDone();
+
+    assert.strictEqual(result.toolCalls, undefined);
+    assert.strictEqual(result.text, partial);
+    assert.deepStrictEqual(result.unparsedToolCallMarkup, {
+      count: 1,
+      countIsLowerBound: false,
+    });
+  });
+
+  it("flags a reply cut off inside an invoke opening that revealed its name", async () => {
+    // The invoke tag never closed, so no tag was parsed, but the name arrived in
+    // full: the reply was writing a call, not prose, and counts as unparsed
+    // DSML markup.
+    const cut = `${dsmlTag("spaced", "calls")}\n` +
+      `${dsmlTag("spaced", "invoke", ' name="bash"')}`.slice(0, -1);
+    const { transport, run } = dsmlTurn(cut, [dsmlTool("bash")]);
+    const result = await run();
+    transport.assertDone();
+
+    assert.strictEqual(result.toolCalls, undefined);
+    assert.strictEqual(result.text, cut);
+    assert.deepStrictEqual(result.unparsedToolCallMarkup, {
+      count: 1,
+      countIsLowerBound: false,
+    });
+  });
+
+  it("flags a malformed DSML block whose parameter element is unclosed", async () => {
+    const malformed = DSML_BASH_BLOCK.replace(
+      /<\/[^>]*DSML[^>]*parameter>/u,
+      "",
+    );
+    assert.notStrictEqual(malformed, DSML_BASH_BLOCK);
+    const { transport, run } = dsmlTurn(malformed, [dsmlTool("bash")]);
+    const result = await run();
+    transport.assertDone();
+
+    assert.strictEqual(result.toolCalls, undefined);
+    assert.strictEqual(result.text, malformed);
+    assert.deepStrictEqual(result.unparsedToolCallMarkup, {
+      count: 1,
+      countIsLowerBound: false,
+    });
+  });
+
+  it("keeps a literal value that looks like deep and wide JSON", async () => {
+    // A `string="true"` value is literal text the model wrote, never parsed, so
+    // its commas and brackets are content: a long command line or a file body
+    // must not be rejected for looking like deeply nested or very wide JSON.
+    const command = `echo ${",".repeat(2_048)} ${"[".repeat(100)}` +
+      `${"}".repeat(100)}`;
+    const block = dsmlBlock("spaced", "bash", [
+      ["command", ' string="true"', command],
+    ]);
+    const { transport, run } = dsmlTurn(block, [dsmlTool("bash")]);
+    const result = await run();
+    transport.assertDone();
+
+    assert.deepStrictEqual(result.toolCalls, [{
+      id: "text-tool-1",
+      name: "bash",
+      arguments: { command },
+    }]);
+  });
+
+  it("still refuses a literal value past the character budget", async () => {
+    const long = "x".repeat(65 * 1_024 + 1);
+    const block = dsmlBlock("spaced", "bash", [
+      ["command", ' string="true"', long],
+    ]);
+    const { transport, run } = dsmlTurn(block, [dsmlTool("bash")]);
+    const result = await run();
+    transport.assertDone();
+
+    assert.strictEqual(result.toolCalls, undefined);
+    assert.strictEqual(result.text, block);
+  });
+
+  it("keeps a string=true value's own leading and trailing newlines", async () => {
+    const body = "\nline one\nline two\n\n";
+    const block = dsmlBlock("spaced", "bash", [
+      ["command", ' string="true"', body],
+    ]);
+    const { transport, run } = dsmlTurn(block, [dsmlTool("bash")]);
+    const result = await run();
+    transport.assertDone();
+
+    assert.deepStrictEqual(result.toolCalls, [{
+      id: "text-tool-1",
+      name: "bash",
+      arguments: { command: body },
+    }]);
+  });
+
+  it("recovers a DSML call from a streamed reply and strips it from the deltas", async () => {
+    const deltas: string[] = [];
+    const { transport, run } = dsmlTurn(
+      `${DSML_PROSE} ${DSML_BASH_BLOCK}`,
+      [dsmlTool("bash")],
+      { streamed: true, onTextDelta: (delta) => deltas.push(delta) },
+    );
+    const result = await run();
+    transport.assertDone();
+
+    assert.deepStrictEqual(result.toolCalls, [{
+      id: "text-tool-1",
+      name: "bash",
+      arguments: { command: DSML_BASH_COMMAND },
+    }]);
+    assert.strictEqual(result.text, `${DSML_PROSE} `);
+    assert.strictEqual(deltas.join(""), `${DSML_PROSE} `);
+  });
+
+  it("leaves Qwen tool_call recovery unchanged beside a DSML block", async () => {
+    const qwen = "<tool_call><function=list_files>" +
+      "<parameter=path>.</parameter></function></tool_call>";
+    const { transport, run } = dsmlTurn(`${qwen}\n${DSML_BASH_BLOCK}`, [
+      dsmlTool("list_files"),
+      dsmlTool("bash"),
+    ]);
+    const result = await run();
+    transport.assertDone();
+
+    assert.deepStrictEqual(result.toolCalls, [{
+      id: "text-tool-1",
+      name: "list_files",
+      arguments: { path: "." },
+    }, {
+      id: "text-tool-2",
+      name: "bash",
+      arguments: { command: DSML_BASH_COMMAND },
+    }]);
+    assert.strictEqual(result.text, "\n");
+  });
+});
