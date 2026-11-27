@@ -320,6 +320,34 @@ function createMarkupCandidateCounter(limit: number) {
   };
 }
 
+/**
+ * The end of the withheld span when a closed DSML wrapper holds a block
+ * recovery runs in full, or -1. Anything short of that - a block that does not
+ * follow the dialect, one naming a tool the request did not offer, one whose
+ * arguments could not be read, or a body with text left over - means part of
+ * the span is not DSML markup. The caller then reads the body again under the
+ * ordinary rules, so a complete Qwen call inside it is withheld and recovered,
+ * an incomplete one is withheld until it settles or the reply ends, and a
+ * nested block is read as a block. Showing that body raw instead would leave a
+ * Qwen call both executed and displayed.
+ */
+function withheldDsmlRecoveredEnd(
+  text: string,
+  offeredNames: ReadonlySet<string> | undefined,
+): number {
+  const end = dsmlBlockEnd(text, 0);
+  if (end < 0) return -1;
+  const extraction = extractTextToolCallsInternal(
+    text.slice(0, end),
+    offeredNames,
+    true,
+  );
+  return !extraction.unrecoverable && extraction.toolCalls.length > 0 &&
+      extraction.cleaned.length === 0
+    ? end
+    : -1;
+}
+
 /** The Qwen wrapper's closing tag, which ends a withheld Qwen block. */
 const QWEN_TOOL_CALL_CLOSING = "</tool_call>";
 
@@ -502,19 +530,18 @@ function createTextPresenter(
         // A closing wrapper tag is the cheap proof the block ended; the parse
         // then runs once, on the whole block, rather than on every delta.
         if (withheldClosingEnd() < 0) return;
-        const end = dsmlBlockEnd(pending(), 0);
-        if (end < 0) {
-          // The wrapper closed around something that is not a DSML block, so
-          // that markup is prose after all. Release it only as far as its own
-          // close tag, then read on: a recoverable block may follow in the
-          // same text, and it must not be released with the prose. The span is
-          // settled rather than released, because the prose it wraps can hold a
-          // complete Qwen call, which recovery runs and whose markup must not
-          // also be shown.
-          settleWithheld(withheldClosingEnd());
+        const recoveredEnd = withheldDsmlRecoveredEnd(pending(), offeredNames);
+        if (recoveredEnd >= 0) {
+          sawTextToolMarkup = true;
+          endWithholding();
+          dropPendingPrefix(recoveredEnd);
           continue;
         }
-        settleWithheld(end);
+        // The wrapper closed around something recovery did not run as one whole
+        // DSML block. Release its first character and read on, so the body is
+        // decided by the same rules as any other text rather than shown raw.
+        release(1);
+        endWithholding();
         continue;
       }
       if (suppressing === "qwen") {

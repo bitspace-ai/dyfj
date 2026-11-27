@@ -20,6 +20,8 @@ import {
   DSML_WITHHELD_UNOFFERED_SECOND_BLOCK,
   DSML_MARKER,
   dsmlClosedMalformedBlockWithNestedQwen,
+  dsmlClosedMalformedBlockWithPartialQwen,
+  dsmlUnrecoveredBlockWithPartialQwen,
   dsmlTruncatedBlockWithNestedQwen,
   dsmlCharacterChunks,
   dsmlChunksAt,
@@ -1447,7 +1449,111 @@ describe("finish strip and presenter agree on one candidate rule", () => {
     assert.strictEqual(result.text, `${markers}${DSML_BASH_BLOCK}`);
   });
 
-  // A wrapper opening is a candidate only when the thing the dialect puts next
+  // A closed wrapper whose body is not valid DSML can still hold a complete
+  // offered Qwen call. The reader withholds the block, then finds on the
+  // wrapper's close tag that it is not DSML and releases the span as prose -
+  // but the Qwen call inside it runs, so showing its markup would print a call
+  // that executed and make the live deltas a prefix the durable text no longer
+  // has (BIT-991).
+  const closedMalformedOf = async (chunks: readonly string[]) =>
+    await streamOf(chunks, ["bash"]);
+
+  it("M1: runs the Qwen call inside a closed malformed DSML block without showing it", async () => {
+    const command = "ls";
+    const block = dsmlClosedMalformedBlockWithNestedQwen(command);
+    const cut = 24;
+    const { result, deltas } = await closedMalformedOf([
+      block.slice(0, cut),
+      block.slice(cut),
+    ]);
+
+    assert.deepStrictEqual(result.toolCalls, [{
+      id: "text-tool-1",
+      name: "bash",
+      arguments: { command },
+    }]);
+    assert.strictEqual(deltas.join(""), result.text);
+    assert.ok(!result.text.includes("<tool_call>"), result.text);
+  });
+
+  // A valid DSML block followed by a span recovery declines still has to be
+  // read under the ordinary rules: an incomplete Qwen opening inside such a span
+  // is withheld until it settles or the reply ends, exactly as at top level. It
+  // was once settled as raw prose, so the opening was forwarded and then cut at
+  // finish, and the live text stopped being a prefix of the durable text
+  // (BIT-991).
+  const prose = "Let me check that.\n";
+
+  it("does not diverge on a declined span holding an incomplete Qwen opening", async () => {
+    const text = `${prose}${DSML_BASH_BLOCK}\n${
+      dsmlClosedMalformedBlockWithPartialQwen()
+    }`;
+    const chunks: string[] = [];
+    for (let i = 0; i < text.length; i += 9) chunks.push(text.slice(i, i + 9));
+    const { result, deltas } = await streamOf(chunks, ["bash", "list_files"]);
+
+    assert.deepStrictEqual(result.toolCalls, [{
+      id: "text-tool-1",
+      name: "bash",
+      arguments: { command: DSML_BASH_COMMAND },
+    }]);
+    assert.strictEqual(deltas.join(""), result.text);
+    assert.ok(!result.text.includes("<tool_call>"), result.text);
+  });
+
+  it("does not diverge on a declined DSML block ahead of that span", async () => {
+    const text = `${dsmlUnrecoveredBlockWithPartialQwen()}\n${prose}` +
+      `${DSML_BASH_BLOCK}`;
+    const { result, deltas } = await streamOf([text], ["bash", "list_files"]);
+
+    assert.strictEqual(deltas.join(""), result.text);
+    assert.ok(!result.text.includes("<parameter=path>"), result.text);
+  });
+
+  it("withholds a Qwen opening whose close tag arrives after the DSML close", async () => {
+    const text = `${dsmlClosedMalformedBlockWithPartialQwen()}\n` +
+      `</parameter></function></tool_call>`;
+    const chunks: string[] = [];
+    for (let i = 0; i < text.length; i += 6) chunks.push(text.slice(i, i + 6));
+    const { result, deltas } = await streamOf(chunks, ["bash", "list_files"]);
+
+    // The Qwen call's close tags land after the DSML close tag, so the opening
+    // is still pending when the wrapper ends. It is withheld rather than shown,
+    // and the turn's live text stays exactly what it delivered.
+    assert.strictEqual(result.toolCalls?.length, 1);
+    assert.strictEqual(result.toolCalls?.[0].name, "list_files");
+    assert.strictEqual(deltas.join(""), result.text);
+    assert.ok(!result.text.includes("<tool_call>"), result.text);
+  });
+
+  it("M2: does the same when the whole reply arrives in one delta", async () => {
+    const command = "node --test prototype/src/providers/shared/" +
+      "text-tool-calls.test.ts 2>&1 | tail -12";
+    const block = dsmlClosedMalformedBlockWithNestedQwen(command);
+    const { result, deltas } = await closedMalformedOf([block]);
+
+    assert.deepStrictEqual(result.toolCalls, [{
+      id: "text-tool-1",
+      name: "bash",
+      arguments: { command },
+    }]);
+    assert.strictEqual(deltas.join(""), result.text);
+    assert.ok(!result.text.includes("<tool_call>"), result.text);
+  });
+
+  it("Q3: drops it when the whole reply arrives in one delta", async () => {
+    const command = "node --test prototype/src/providers/shared/" +
+      "text-tool-calls.test.ts 2>&1 | tail -12";
+    const block = dsmlTruncatedBlockWithNestedQwen(command);
+    const { result, deltas } = await nestedQwenOf([block]);
+
+    assert.strictEqual(result.text, nestedQwenPrefix);
+    assert.strictEqual(deltas.join(""), result.text);
+    assert.ok(!result.text.includes(DSML_PIPE), result.text);
+  });
+});
+
+// A wrapper opening is a candidate only when the thing the dialect puts next
 // follows it: its own whitespace and then an invoke. Searching ahead for the
 // next tag instead let a wrapper *mentioned in prose* borrow an invoke further
 // down the reply, so the mention read as recoverable and everything between
@@ -1535,59 +1641,5 @@ describe("a DSML wrapper candidate reads only its own whitespace", () => {
     }]);
     assert.strictEqual(result.text, "");
     assert.strictEqual(deltas.join(""), "");
-  });
-});
-
-// A closed wrapper whose body is not valid DSML can still hold a complete
-  // offered Qwen call. The reader withholds the block, then finds on the
-  // wrapper's close tag that it is not DSML and releases the span as prose -
-  // but the Qwen call inside it runs, so showing its markup would print a call
-  // that executed and make the live deltas a prefix the durable text no longer
-  // has (BIT-991).
-  const closedMalformedOf = async (chunks: readonly string[]) =>
-    await streamOf(chunks, ["bash"]);
-
-  it("M1: runs the Qwen call inside a closed malformed DSML block without showing it", async () => {
-    const command = "ls";
-    const block = dsmlClosedMalformedBlockWithNestedQwen(command);
-    const cut = 24;
-    const { result, deltas } = await closedMalformedOf([
-      block.slice(0, cut),
-      block.slice(cut),
-    ]);
-
-    assert.deepStrictEqual(result.toolCalls, [{
-      id: "text-tool-1",
-      name: "bash",
-      arguments: { command },
-    }]);
-    assert.strictEqual(deltas.join(""), result.text);
-    assert.ok(!result.text.includes("<tool_call>"), result.text);
-  });
-
-  it("M2: does the same when the whole reply arrives in one delta", async () => {
-    const command = "node --test prototype/src/providers/shared/" +
-      "text-tool-calls.test.ts 2>&1 | tail -12";
-    const block = dsmlClosedMalformedBlockWithNestedQwen(command);
-    const { result, deltas } = await closedMalformedOf([block]);
-
-    assert.deepStrictEqual(result.toolCalls, [{
-      id: "text-tool-1",
-      name: "bash",
-      arguments: { command },
-    }]);
-    assert.strictEqual(deltas.join(""), result.text);
-    assert.ok(!result.text.includes("<tool_call>"), result.text);
-  });
-
-  it("Q3: drops it when the whole reply arrives in one delta", async () => {
-    const command = "node --test prototype/src/providers/shared/" +
-      "text-tool-calls.test.ts 2>&1 | tail -12";
-    const block = dsmlTruncatedBlockWithNestedQwen(command);
-    const { result, deltas } = await nestedQwenOf([block]);
-
-    assert.strictEqual(result.text, nestedQwenPrefix);
-    assert.strictEqual(deltas.join(""), result.text);
-    assert.ok(!result.text.includes(DSML_PIPE), result.text);
   });
 });

@@ -226,6 +226,44 @@ export function qwenUnrecoverableBashBlock(): string {
   return qwenBashBlock("[".repeat(65));
 }
 
+/**
+ * A closed wrapper whose body is not a DSML block and whose body also holds an
+ * *incomplete* Qwen `<tool_call>` opening, the shape a model leaves when it
+ * writes a heredoc that starts a Qwen fixture and closes its own markup before
+ * the fixture does. The `parameter` carries no `name`, so the block cannot be
+ * read and recovery does not run it; the body still has to be read again under
+ * the ordinary rules, or the Qwen opening is forwarded and then stripped at
+ * finish as if it were never shown.
+ */
+export function dsmlClosedMalformedBlockWithPartialQwen(): string {
+  return `${dsmlTag("spaced", "calls")}\n` +
+    `${dsmlTag("spaced", "invoke", ' name="bash"')}\n` +
+    `${dsmlTag("spaced", "parameter", ' string="true"')}` +
+    `<tool_call><function=list_files><parameter=path>` +
+    `${dsmlCloseTag("spaced", "parameter")}\n` +
+    `${dsmlCloseTag("spaced", "invoke")}\n` +
+    `${dsmlCloseTag("spaced", "calls")}`;
+}
+
+/**
+ * A complete DSML block that recovery declines because its *second* invoke
+ * names a tool the caller did not offer, with an incomplete Qwen `<tool_call>`
+ * opening in the first parameter. Nothing here runs: the block names an
+ * unoffered tool and the Qwen call never closes. The body is still text the
+ * reader has to decide under the ordinary rules rather than forward.
+ */
+export function dsmlUnrecoveredBlockWithPartialQwen(): string {
+  return `${dsmlTag("spaced", "calls")}\n` +
+    `${dsmlTag("spaced", "invoke", ' name="bash"')}\n` +
+    `${dsmlTag("spaced", "parameter", ' name="command" string="true"')}` +
+    `<tool_call><function=list_files><parameter=path>` +
+    `${dsmlCloseTag("spaced", "parameter")}\n` +
+    `${dsmlCloseTag("spaced", "invoke")}\n` +
+    `${dsmlTag("spaced", "invoke", ' name="other"')}\n` +
+    `${dsmlCloseTag("spaced", "invoke")}\n` +
+    `${dsmlCloseTag("spaced", "calls")}`;
+}
+
 /** The separator-wrapped run one DSML tag carries, as prose may quote it. */
 export const DSML_MARKER = `${DSML_PIPE}DSML${DSML_PIPE}`;
 

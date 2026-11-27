@@ -554,7 +554,10 @@ function scanDsmlBlock(text: string, wrapperStart: number): DsmlBlockScan {
       return failedBlockScan({
         truncated: true,
         invokeNames,
-        structureRevealed,
+        // A revealed invoke name is DSML structure past the wrapper opening,
+        // even though the tag holding it never closed: a reply that ends there
+        // was writing a call, not prose.
+        structureRevealed: structureRevealed || pending !== undefined,
         ...(pending !== undefined ? { pendingInvokeName: pending } : {}),
       });
     }

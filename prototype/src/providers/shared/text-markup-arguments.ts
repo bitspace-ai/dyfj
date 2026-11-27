@@ -48,8 +48,14 @@ export function toolArgumentWithinBudget(raw: string): boolean {
   return true;
 }
 
+/**
+ * A `string="true"` value is the model's literal text, never parsed as JSON, so
+ * only the character budget applies: its commas and brackets are content, not
+ * structure, and a long command line or file body must not be rejected for
+ * looking like deep or wide JSON.
+ */
 function literalToolArgument(raw: string): CoercedToolArgument {
-  return toolArgumentWithinBudget(raw)
+  return raw.length <= MAX_CANONICAL_JSON_CHARACTERS
     ? { ok: true, value: raw }
     : { ok: false };
 }

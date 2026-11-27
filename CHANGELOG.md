@@ -25,22 +25,32 @@ README are tracked separately in its Revision history section.
   resolves through the same wire-name mapping as a structured call
   (`gate_wait` reaches `gate/wait`), a `parameter` marked `string="true"` is
   literal text kept exactly as written (multiline command lines included, with
-  its own leading and trailing newlines), and one marked `string="false"` is
-  JSON and must parse, so numbers, booleans, objects and arrays arrive typed.
+  its own leading and trailing newlines) and budgeted on characters alone,
+  because it is never parsed: its commas and brackets are content, so a long
+  command line or file body is not refused for looking like deep or wide JSON,
+  while one past the canonical-JSON character budget still fails closed. A
+  `parameter` marked `string="false"` is JSON and must parse, so numbers,
+  booleans, objects and arrays arrive typed.
   `providers/shared/text-tool-calls.ts` composes the two
   dialects: recovery returns whichever markup came first in the text, and the
   unparsed-markup count now also reports a DSML block left unrun — a whole
   block left in the text, or one the reply cuts off once it has revealed DSML
-  structure past its opening — rather than treating it as an answer. The
+  structure past its opening, a wrapper opening that never closed but did
+  reveal an invoke name included — rather than treating it as an answer. The
   streaming presenter withholds a DSML block as it arrives, so the raw markup
   never flashes to the terminal, and a reply that ends inside a block it was
   still withholding drops that block from the text instead of showing it. A
-  block that closed but does not follow the dialect is prose: it is released
-  only as far as its own close tag and the reader carries on, so a recoverable
-  block later in the same reply is still recovered rather than shown, and that
-  released prose still has any complete call it holds removed before it is
-  shown, so a call nested in markup the reader was withholding is never both
-  run and displayed. The delivery never cuts text it already forwarded: the
+  block that closed but does not follow the dialect is prose, and the reader
+  carries on: a recoverable block later in the same reply is still recovered
+  rather than shown. A closed body recovery does not run as one whole block —
+  malformed, naming a tool the request did not offer, or holding an argument it
+  cannot read — is not shown raw either: the reader releases its first
+  character and re-reads the rest under these same rules, so a complete call
+  inside it is still withheld and recovered, an incomplete one is still
+  withheld until it settles or the reply ends, and a nested block is read as a
+  block. A call nested in markup the reader was withholding is therefore never
+  both run and displayed. The delivery never cuts text it already forwarded:
+  the
   presenter and the finish strip read one per-candidate decision, so only a
   block whose first invoke names an offered tool, or one still undecided within
   its bound, is ever cut. A markup opener a tokenizer splits across deltas is
