@@ -1263,27 +1263,26 @@ The response must include generated text. Health/list endpoints such as Ollama `
 - `src/context/` — layer L2: what the model sees on a turn, imported through `src/context/mod.ts`: workspace/repo context packing and AGENTS.md loading (`repo-context.ts`), operator global instructions loading (`operator-instructions.ts`: `[context] operator_instructions` / `DYFJ_OPERATOR_INSTRUCTIONS` for native loopback companion turns, with parent `realpath` + owner/no-shared-write checks, no-follow leaf + `(dev, ino)` TOCTOU verification, 64 KiB / 16,000-token fail-closed bounds, path-free warnings on missing or refused files, and path-free `operator instructions <config:context.operator_instructions>` source reporting), companion prompt composition (`prompts.ts`), transcript compression (`compression.ts`, which withholds `dispatch/read` result bodies from the compressor's input, so its user-role summary is not built from them; the coordinator's own assistant text, quotes included, is still copied), length-stop and context-overflow recovery (`length-recovery.ts`), request fitting (`request-fit.ts`: the input budget a request may fill on a model's context window, the window-bounding of a fresh tool result, and the shrinking of earlier tool results to a prefix plus a marker the model can read), and the conversation projection that rebuilds a session's prior turns from its events (`conversation.ts`). Imports `src/kernel/`, `src/contract/`, `src/config/`, `src/store/`, and provider types only
 - `src/transport/` — layer L2: the JSON-RPC 2.0 process seam over Unix sockets (codec and framing, request dispatch, the duplex connection peer, socket-path resolution, the client connect, the server bind/accept loop, and the request-parameter sanitizers every method module runs its params through (`rpc-params.ts`)). The peer, client and listener depend on the byte-stream ports in `connection.ts` (`ByteConnection`, `ConnectionListener`, `SocketHost`); `node-socket.ts` is the one `node:net` adapter behind them and today the only non-test module that imports `node:net`; the `arch.imports` lane confines `node:net` to `src/transport/`. Imported through `src/transport/mod.ts` and importing only `src/kernel/`, `src/contract/`, and `src/config/`. The CLI reaches the engine only through it; the engine's method handlers are in `src/server/rpc/`. The Rust REPL client in `../core/dyfj-repl` speaks the same wire format, so framing, method names, error codes, and socket-path resolution stay byte-identical
 - `src/providers/` — layer L2: model providers behind one `ProviderAdapter` interface (`specs/01-architecture.md` §5.2), imported through `src/providers/mod.ts`. `registry/` parses the catalog from the store's model reader (declared structurally, so `providers/` does not import `store/`), routes turns, holds the built-in local defaults, and dispatches each turn to the adapter serving the selected model's provider; a provider no adapter serves fails closed. One directory per API family (`openai-compatible/`, `anthropic/`, `gemini/`) holds its request, stream, usage and stop-reason code; `shared/` holds what they share (SSE line reading, text tool-call extraction and its bounds and argument-coercion helpers, the DeepSeek DSML text tool-call dialect, token estimates, wire-safe tool names, base-URL rules); `http.ts` holds the `HttpTransport` port and the header deadline. The OpenAI-compatible adapter recovers a tool call a model writes as text in either dialect it is known to leak — a complete `<tool_call><function=NAME>…</function></tool_call>` block (Qwen) or a complete DeepSeek DSML `calls` / `function_calls` block (`shared/dsml-tool-calls.ts`; its tags are wrapped in the fullwidth vertical bar or the ASCII pipe, its invoke name resolves through the same wire-name mapping as a structured call, and a `parameter` marked `string="true"` is literal text while one marked `string="false"` is JSON and must parse) — only when the request offers every tool it names, so a forced conclusion, which offers none, never runs one; any tool-call markup left in the text that ran no tool (each function element of a complete Qwen block recovery did not run, counted once toward its innermost wrapper, plus unmatched `<tool_call>` openings when there are two or more, plus each whole DSML block left in the text or cut off after revealing DSML structure — a wrapper opening that never closed but did reveal an invoke name included) is reported as the result's `unparsedToolCallMarkup` count, which the engine records on the `provider_call` event and discloses as an `unparsedToolCallMarkupDetected` runtime event. Both
-dialects are withheld from live output while they stream — including an opener a
-tokenizer splits across deltas, and with the prose after a recovered block
+dialects are withheld from live output while they stream — including an opener
+a tokenizer splits across deltas, and with the prose after a recovered block
 forwarded as it arrives — and a candidate block is withheld only while it may
 still turn out recoverable, so markup-shaped prose holds text back no longer
 than one wrapper and invoke tag. A reply that ends inside a block the presenter
 was still withholding drops that block from its text, while a block that closed
-but does not follow the dialect is prose: it is released only as far as its own
-close tag and the presenter carries on, so a recoverable block later in the
-same reply is still recovered rather than shown. A closed body recovery does
-not run as one whole block — malformed, naming a tool the request did not
-offer, or holding an argument it cannot read — is not shown raw either: the
-presenter releases its first character and re-reads the rest under these same
-rules, so a complete call inside it is still withheld and recovered and an
-incomplete one is still withheld until it settles or the reply ends. The
-presenter and the finish strip read one per-candidate decision — a block's
-*first* invoke name, and nothing later, read after the wrapper's own whitespace
-and nowhere else — so the block a reader withheld is exactly the block the
-strip cuts, and a wrapper quoted in prose cannot borrow an invoke written
-further down the reply and hold back the text between them. A withheld block's
-chunks are held as they arrived and only the carried tail plus the newly
-arrived characters are probed for the close tag, so a long block costs
+but does not follow the dialect is prose and the presenter carries on, so a
+recoverable block later in the same reply is still recovered rather than shown.
+A closed body recovery does not run as one whole block — malformed, naming a
+tool the request did not offer, or holding an argument it cannot read — is not
+shown raw either: the presenter releases its first character and re-reads the
+rest under these same rules, so a complete call inside it is still withheld and
+recovered and an incomplete one is still withheld until it settles or the reply
+ends. The presenter and the finish strip read one per-candidate decision — a
+block's *first* invoke name, and nothing later, read after the wrapper's own
+whitespace and nowhere else — so the block a reader withheld is exactly the
+block the strip cuts, and a wrapper quoted in prose cannot borrow an invoke
+written further down the reply and hold back the text between them. A withheld
+block's chunks are held as they arrived and only the carried tail plus the
+newly arrived characters are probed for the close tag, so a long block costs
 wall-clock time linear in the characters that arrived. A `parameter` marked
 `string="true"` is budgeted on characters alone: the value is the model's
 literal text and is never parsed, so its commas and brackets are content and a

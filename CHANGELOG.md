@@ -50,8 +50,7 @@ README are tracked separately in its Revision history section.
   withheld until it settles or the reply ends, and a nested block is read as a
   block. A call nested in markup the reader was withholding is therefore never
   both run and displayed. The delivery never cuts text it already forwarded:
-  the
-  presenter and the finish strip read one per-candidate decision, so only a
+  the presenter and the finish strip read one per-candidate decision, so only a
   block whose first invoke names an offered tool, or one still undecided within
   its bound, is ever cut. A markup opener a tokenizer splits across deltas is
   withheld too, including a fragment as short as `<` and the separator run, and
