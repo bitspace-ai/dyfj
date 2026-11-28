@@ -28,6 +28,28 @@ const UPSTREAM = {
 };
 
 describe("standardInputSchema", () => {
+  it("strips nullable false at nested output boundaries without changing types", () => {
+    const schema: JsonSchemaObject = {
+      type: "object",
+      properties: {
+        direct: { type: "string", nullable: false },
+        nested: {
+          type: "object",
+          properties: { value: { type: "integer", nullable: false } },
+        },
+        list: { type: "array", items: { type: "string", nullable: false } },
+        either: { anyOf: [{ type: "string", nullable: false }] },
+      },
+    };
+    const original = JSON.stringify(schema);
+    const output = standardInputSchema(schema);
+    assert.equal(JSON.stringify(output).includes('"nullable"'), false);
+    assert.equal(output.properties?.direct?.type, "string");
+    assert.equal(valid(output, { direct: null }), false);
+    assert.equal(valid(output, { direct: "value" }), true);
+    assert.equal(JSON.stringify(schema), original);
+  });
+
   it("publishes a nullable property as the standard null union", () => {
     const internal = sanitizeMcpInputSchema(UPSTREAM);
     assert.deepEqual(JSON.parse(JSON.stringify(internal)), {

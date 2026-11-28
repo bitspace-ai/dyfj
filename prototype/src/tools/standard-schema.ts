@@ -4,7 +4,7 @@
  * `CommandDefinition.inputSchema` is the runtime's own shape, and it is what
  * the shared validator reads (`validate.ts`). One keyword in it is not JSON
  * Schema: `nullable`, which marks a property that also accepts `null`
- * (`tools/mcp/adapter.ts` normalizes an upstream `["string","null"]` union to
+ * (`tools/mcp/schema.ts` normalizes an upstream `["string","null"]` union to
  * one scalar type plus that flag, so the runtime never holds a property with
  * two types).
  *
@@ -36,7 +36,7 @@ export type StandardInputSchema = StandardJsonSchemaObject;
 
 /** Whether `property` or anything nested in it carries the internal keyword. */
 function hasNullable(property: JsonSchemaProperty): boolean {
-  if (property.nullable === true) return true;
+  if (Object.hasOwn(property, "nullable")) return true;
   for (const child of Object.values(property.properties ?? {})) {
     if (hasNullable(child)) return true;
   }

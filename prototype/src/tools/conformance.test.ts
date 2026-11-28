@@ -44,7 +44,7 @@ const discovered = {
     required: ["team"],
     properties: {
       team: { type: ["string", "null"] },
-      query: { type: ["string", "null"] },
+      query: { type: ["string", "null"], enum: ["all", null] },
       assignee: { type: ["string", "null"] },
     },
     additionalProperties: false,

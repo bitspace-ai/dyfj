@@ -1095,6 +1095,14 @@ is validated against the property's own constraints. A declared `enum` is
 exact: an enum that omits null still refuses null even when the property is
 nullable.
 
+For this nullable scalar form, discovery preserves `enum` and finite numeric
+`minimum` and `maximum` bounds. Other keywords, except the annotations `title`,
+`description`, `default`, `examples`, `deprecated`, `readOnly`, `writeOnly` and
+`$comment`, cause rejection instead of being dropped. This includes `pattern`
+and composition constraints. Annotations are omitted from the runtime shape;
+this does not change the existing handling of non-nullable schemas. Output
+conversion removes the internal `nullable` keyword for either boolean value.
+
 `minimum_clearance = "loopback"` withholds the tools from remote-clearance
 turns. `minimum_clearance = "remote"` declares eligibility for both remote and
 loopback turns. The current boot integration is the UDS daily-driver runtime. A
@@ -4085,3 +4093,5 @@ Document revisions only. Code and behavior changes are tracked in
 
 - 2026-11-28 - Document nullable scalar normalization for discovered MCP tool
   schemas, standard JSON Schema publication, and the remaining union limits.
+  Clarify preserved numeric bounds, rejected nullable constraint keywords,
+  omitted annotations, and removal of the internal flag for either boolean.

@@ -280,6 +280,7 @@ function propertyProblems(
 }
 
 function matchesType(property: JsonSchemaProperty, value: unknown): boolean {
+  if (value === null && property.nullable === true) return true;
   switch (property.type) {
     case "integer":
       return Number.isInteger(value);

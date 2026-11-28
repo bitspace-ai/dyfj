@@ -148,6 +148,23 @@ test("schemaProblems flags an invalid schema", () => {
   ]);
 });
 
+test("schemaProblems accepts null enum entries only for nullable properties", () => {
+  for (const type of ["string", "integer", "number", "boolean"] as const) {
+    const value = type === "string" ? "all" : type === "boolean" ? true : 1;
+    for (const nullable of [true, false]) {
+      const command = synthetic("nullable.enum", {}, {
+        inputSchema: {
+          type: "object",
+          properties: { input: { type, nullable, enum: [value, null] } },
+        },
+      });
+      assert.deepStrictEqual(schemaProblems(command), nullable ? [] : [
+        "inputSchema.input.enum holds a value of another type",
+      ]);
+    }
+  }
+});
+
 test("envelopeProblems flags an undeclared or contradictory envelope", () => {
   assert.deepStrictEqual(
     envelopeProblems(synthetic("gaps", {

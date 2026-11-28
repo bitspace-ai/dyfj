@@ -19,7 +19,7 @@ README are tracked separately in its Revision history section.
   configured query tool could be registered, however the operator's allowlist
   was written. A `type` array naming one scalar type and `"null"` now
   normalizes to that scalar type plus a `nullable` flag
-  (`tools/mcp/adapter.ts`); the flag is part of the one tool shape
+  (`tools/mcp/schema.ts`); the flag is part of the one tool shape
   (`tools/definition.ts`); and argument validation accepts `null` for a
   nullable property while still checking every non-null value against the
   property's own constraints (`tools/validate.ts`). A declared `enum` stays
@@ -38,6 +38,11 @@ README are tracked separately in its Revision history section.
   reason. The tool conformance kit accepts the new keyword
   (`testing/conformance/tool.ts`), and the root README's sanitizer limits state
   the normalization and its boundaries.
+  Nullable scalar discovery preserves finite numeric `minimum` and `maximum`
+  bounds and enums, and rejects other constraint keywords instead of dropping
+  them. Nullable enums may include null in the conformance kit. Output
+  conversion strips `nullable: false` as well as `nullable: true`, and the
+  published property type omits the internal flag.
 
 - **DeepSeek DSML text tool-call markup is recovered, and its markup no longer
   reaches the operator as prose (`BIT-991`).** A DeepSeek model served through

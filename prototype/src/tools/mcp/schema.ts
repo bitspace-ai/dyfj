@@ -67,6 +67,12 @@ const NULLABLE_SCALAR_TYPES = new Set([
   "boolean",
 ]);
 
+const NULLABLE_SCALAR_KEYWORDS = new Set([
+  "type", "enum", "minimum", "maximum",
+  "title", "description", "default", "examples", "deprecated", "readOnly",
+  "writeOnly", "$comment",
+]);
+
 /**
  * The one upstream spelling this sanitizer admits for a nullable property: a
  * `type` array naming one scalar type and `"null"`. It becomes that scalar type
@@ -87,6 +93,24 @@ function nullableShape(
   const typed = names.filter((name) => name !== "null");
   if (typed.length !== 1 || !NULLABLE_SCALAR_TYPES.has(typed[0] as string)) {
     rejectSchema(`type ${describeType(input.type)} is not supported`);
+  }
+  if (Object.keys(input).some((key) => !NULLABLE_SCALAR_KEYWORDS.has(key))) {
+    rejectSchema("a nullable scalar has an unsupported keyword");
+  }
+  if (
+    Object.hasOwn(input, "enum") &&
+    (!Array.isArray(input.enum) || input.enum.length === 0)
+  ) {
+    rejectSchema("a nullable scalar enum is not a non-empty array");
+  }
+  for (const bound of ["minimum", "maximum"]) {
+    if (!Object.hasOwn(input, bound)) continue;
+    if (
+      (typed[0] !== "number" && typed[0] !== "integer") ||
+      typeof input[bound] !== "number" || !Number.isFinite(input[bound])
+    ) {
+      rejectSchema("a nullable numeric bound is not a finite number on a numeric type");
+    }
   }
   return {
     type: typed[0] as string,
@@ -138,7 +162,12 @@ function sanitizeSchemaNode(
     }
   }
   const output: Record<string, unknown> = { type };
-  if (isNullable) output.nullable = true;
+  if (isNullable) {
+    output.nullable = true;
+    for (const bound of ["minimum", "maximum"]) {
+      if (Object.hasOwn(input, bound)) output[bound] = input[bound];
+    }
+  }
   if (type === "object") {
     const rawProperties = input.properties ?? {};
     if (

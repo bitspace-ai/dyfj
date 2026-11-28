@@ -278,7 +278,7 @@ export type StandardTypeName =
  * place this shape is wider than `JsonSchemaProperty`.
  */
 export type StandardJsonSchemaProperty =
-  & Omit<JsonSchemaProperty, "type" | "properties" | "items" | "anyOf">
+  & Omit<JsonSchemaProperty, "type" | "properties" | "items" | "anyOf" | "nullable">
   & {
     type?: StandardTypeName | [StandardTypeName, "null"];
     anyOf?: StandardJsonSchemaProperty[];
