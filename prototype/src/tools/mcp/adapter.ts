@@ -26,6 +26,15 @@ import {
   type McpCallResult,
   type McpDiscoveryResult,
 } from "./transport.ts";
+import {
+  McpSchemaRejectedError,
+  retainConfiguredMcpTools,
+  sanitizeMcpInputSchema,
+} from "./schema.ts";
+import {
+  standardInputSchema,
+  type StandardInputSchema,
+} from "../standard-schema.ts";
 import { createWebToolsSessionState, defineWebCommands } from "../web/web.ts";
 
 const MCP_REVISION = "2026-07-28";
@@ -35,13 +44,6 @@ const DISCOVERY_RESPONSE_MAX_BYTES = 4 * 1024 * 1024;
 const CALL_RESPONSE_MAX_BYTES = 256 * 1024;
 // The model's copy of a server's error text, single-lined.
 const UPSTREAM_ERROR_MAX_BYTES = 300;
-const MAX_SCHEMA_BYTES = 64_000;
-const MAX_SCHEMA_DEPTH = 12;
-const MAX_SCHEMA_PROPERTIES = 64;
-// Linear's get_issue offers a 45-value `fields` enum; the byte limit above
-// still bounds the schema as a whole.
-const MAX_SCHEMA_ENUM_VALUES = 64;
-const TOOL_ARGUMENT_NAME = /^[A-Za-z_][A-Za-z0-9_.-]{0,63}$/;
 
 export type ExternalMcpDiagnostic =
   | {
@@ -98,42 +100,6 @@ export function formatExternalMcpDiagnostic(
     case "unavailable":
       return `${prefix} unavailable (${diagnostic.reason})`;
   }
-}
-
-/**
- * A schema the sanitizer refuses. `reason` names the rule or limit it broke;
- * it carries counts and JSON Schema type names, never other schema content.
- */
-export class McpSchemaRejectedError extends Error {
-  readonly reason: string;
-  constructor(reason: string) {
-    super(`external MCP tool schema rejected: ${reason}`);
-    this.name = "McpSchemaRejectedError";
-    this.reason = reason;
-  }
-}
-
-function rejectSchema(reason: string): never {
-  throw new McpSchemaRejectedError(reason);
-}
-
-const JSON_SCHEMA_TYPES = new Set([
-  "object",
-  "string",
-  "number",
-  "integer",
-  "boolean",
-  "array",
-  "null",
-]);
-
-/** Names an unsupported type only from JSON Schema's own vocabulary. */
-function describeType(type: unknown): string {
-  const names = Array.isArray(type) ? type : [type];
-  return names.length > 0 && names.length <= 7 &&
-      names.every((name) => JSON_SCHEMA_TYPES.has(name as string))
-    ? JSON.stringify(type)
-    : "of an unrecognized form";
 }
 
 export interface ExternalMcpCommands {
@@ -228,6 +194,19 @@ export async function discoverMcpTools(
   );
 }
 
+/**
+ * The tool definition handed to the MCP client with a call. `toolDefinition`
+ * is compiled by the SDK's standards validator, which does not know the
+ * runtime's own `nullable` keyword, so the schema is converted here exactly as
+ * the provider projection and the bridge's `tools/list` convert theirs.
+ */
+export function callToolDefinition(
+  tool: string,
+  inputSchema: JsonSchemaObject,
+): { name: string; inputSchema: StandardInputSchema } {
+  return { name: tool, inputSchema: standardInputSchema(inputSchema) };
+}
+
 export async function callMcpTool(
   input: {
     server: McpHttpServerConfig;
@@ -255,135 +234,11 @@ export async function callMcpTool(
         },
         {
           timeout: CALL_TIMEOUT_MS,
-          toolDefinition: {
-            name: input.tool,
-            inputSchema: input.inputSchema,
-          },
+          toolDefinition: callToolDefinition(input.tool, input.inputSchema),
         },
       ),
     policy,
   );
-}
-
-function sanitizeSchemaNode(
-  value: unknown,
-  depth: number,
-): Record<string, unknown> {
-  if (depth > MAX_SCHEMA_DEPTH) {
-    rejectSchema(`nesting deeper than ${MAX_SCHEMA_DEPTH} levels`);
-  }
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    rejectSchema("a schema node is not an object");
-  }
-  const input = value as Record<string, unknown>;
-  if (Object.hasOwn(input, "$ref")) {
-    rejectSchema("$ref is not supported");
-  }
-  let type = input.type;
-  if (
-    type !== "object" && type !== "string" && type !== "number" &&
-    type !== "integer" && type !== "boolean" && type !== "array"
-  ) {
-    if (Array.isArray(input.anyOf)) {
-      type = "string";
-    } else if (type === undefined) {
-      rejectSchema("a schema node has no type");
-    } else {
-      rejectSchema(`type ${describeType(type)} is not supported`);
-    }
-  }
-  const output: Record<string, unknown> = { type };
-  if (type === "object") {
-    const rawProperties = input.properties ?? {};
-    if (
-      typeof rawProperties !== "object" || rawProperties === null ||
-      Array.isArray(rawProperties)
-    ) {
-      rejectSchema("properties is not an object");
-    }
-    const entries = Object.entries(rawProperties as Record<string, unknown>);
-    if (entries.length > MAX_SCHEMA_PROPERTIES) {
-      rejectSchema(
-        `${entries.length} properties exceeds ${MAX_SCHEMA_PROPERTIES}`,
-      );
-    }
-    const properties: Record<string, unknown> = Object.create(null);
-    for (const [name, property] of entries) {
-      if (!TOOL_ARGUMENT_NAME.test(name)) {
-        rejectSchema("a property name is not a valid argument name");
-      }
-      properties[name] = sanitizeSchemaNode(property, depth + 1);
-    }
-    output.properties = properties;
-    if (input.required !== undefined) {
-      if (
-        !Array.isArray(input.required) ||
-        !input.required.every((name) =>
-          typeof name === "string" && Object.hasOwn(properties, name)
-        )
-      ) {
-        rejectSchema("required is not a list of declared property names");
-      }
-      output.required = [...new Set(input.required)];
-    }
-    if (input.additionalProperties !== undefined) {
-      if (typeof input.additionalProperties !== "boolean") {
-        rejectSchema("additionalProperties is not a boolean");
-      }
-      output.additionalProperties = input.additionalProperties;
-    }
-  }
-  if (type === "array") {
-    if (input.items === undefined) {
-      rejectSchema("array schema has no items");
-    }
-    output.items = sanitizeSchemaNode(input.items, depth + 1);
-  }
-  if (Array.isArray(input.enum)) {
-    if (input.enum.length > MAX_SCHEMA_ENUM_VALUES) {
-      rejectSchema(
-        `enum of ${input.enum.length} values exceeds ${MAX_SCHEMA_ENUM_VALUES}`,
-      );
-    }
-    if (
-      !input.enum.every((entry) =>
-        typeof entry === "string" || typeof entry === "number" ||
-        typeof entry === "boolean" || entry === null
-      )
-    ) {
-      rejectSchema("enum value is not a string, number, boolean or null");
-    }
-    output.enum = input.enum;
-  }
-  return output;
-}
-
-export function sanitizeMcpInputSchema(value: unknown): JsonSchemaObject {
-  const bytes = new TextEncoder().encode(JSON.stringify(value)).byteLength;
-  if (bytes > MAX_SCHEMA_BYTES) {
-    rejectSchema(`${bytes} bytes exceeds ${MAX_SCHEMA_BYTES}`);
-  }
-  const schema = sanitizeSchemaNode(value, 0);
-  if (schema.type !== "object") {
-    rejectSchema("input schema root is not an object");
-  }
-  return schema as JsonSchemaObject;
-}
-
-export function retainConfiguredMcpTools(
-  configured: readonly { name: string }[],
-  discovered: readonly DiscoveredMcpTool[],
-): DiscoveredMcpTool[] {
-  const wanted = new Set(configured.map((tool) => tool.name));
-  const retained: DiscoveredMcpTool[] = [];
-  const seen = new Set<string>();
-  for (const tool of discovered) {
-    if (!wanted.has(tool.name) || seen.has(tool.name)) continue;
-    retained.push(tool);
-    seen.add(tool.name);
-    if (seen.size === wanted.size) break;
-  }
-  return retained;
 }
 
 /**

@@ -36,6 +36,19 @@ const discovered = {
     required: ["issueId", "body"],
     properties: { issueId: { type: "string" }, body: { type: "string" } },
   },
+  // The nullable filter shape a configured query tool advertises, so the kit's
+  // generic validation checks cover it: wrong-typed values are still refused,
+  // and null stays a legal value the executor may receive.
+  query_issues: {
+    type: "object",
+    required: ["team"],
+    properties: {
+      team: { type: ["string", "null"] },
+      query: { type: ["string", "null"], enum: ["all", null] },
+      assignee: { type: ["string", "null"] },
+    },
+    additionalProperties: false,
+  },
   save_issue: saveIssueSchema,
   web_search: {
     type: "object",
@@ -60,6 +73,7 @@ const external = await buildExternalMcpCommands(
         auth: { type: "bearer", secret: "linear_mcp" },
         tools: [
           { name: "get_issue", effect: "read", approval: "allow" },
+          { name: "query_issues", effect: "read", approval: "allow" },
           { name: "create_comment", effect: "write_external", approval: "ask" },
           { name: "save_issue", effect: "write_external", approval: "ask" },
         ],
@@ -100,6 +114,7 @@ const external = await buildExternalMcpCommands(
 test("the kit's external MCP fixture derives every command shape", () => {
   assert.deepStrictEqual(external.commands.map((command) => command.id), [
     "mcp.linear.get_issue",
+    "mcp.linear.query_issues",
     "mcp.linear.create_comment",
     "mcp.linear.create_issue",
     "web_search",

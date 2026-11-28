@@ -11,6 +11,29 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **Configured MCP tools can use supported nullable scalar filters
+  (`BIT-998`).** Discovery now admits a `type` array naming one scalar type
+  and `"null"` when its sibling keywords are supported
+  (`tools/mcp/schema.ts`). This enables tools such as Linear issue queries
+  that previously failed discovery on that type array. The internal shape
+  uses one scalar type plus `nullable`; validation accepts null subject to
+  any declared enum and checks non-null values against the retained
+  constraints. Finite numeric `minimum` and `maximum` bounds and enums are
+  preserved. Other constraint keywords are rejected on nullable scalars
+  instead of being dropped; supported annotations are omitted.
+  Null type arrays with a sibling `anyOf` are now rejected, including forms
+  that previously collapsed to string. Structured null unions and unions
+  with multiple non-null types are rejected. Without a null type array,
+  legacy `anyOf` collapse remains, including multi-type arrays with an
+  `anyOf` sibling; this behavior does not preserve the branches' constraints.
+  The provider projection, MCP call's `toolDefinition` and Workbench bridge
+  listing convert nullable scalar types to JSON Schema null unions, because
+  the installed MCP SDK validator ignores the internal flag. Conversion
+  also strips `nullable: false`. Command-authored nullable `anyOf` schemas
+  publish a null alternative while retaining sibling enum restrictions.
+  The tool conformance kit accepts nullable enum null entries, and the
+  published property type omits the internal flag.
+
 - **DeepSeek DSML text tool-call markup is recovered, and its markup no longer
   reaches the operator as prose (`BIT-991`).** A DeepSeek model served through
   an OpenAI-compatible route sometimes writes its native tool-call markup into

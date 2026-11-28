@@ -49,6 +49,25 @@ describe("bridged tools", () => {
     assert.match(bridgedToolName("mcp.a.b-c_d"), /^[A-Za-z0-9_-]+$/);
   });
 
+  // The bridge publishes `tools/list`, which an MCP client validates. The
+  // runtime's own `nullable` keyword is not JSON Schema, so it must leave here
+  // as the standard null union it was normalized from.
+  it("publishes a nullable command's schema in standard JSON Schema", () => {
+    const nullable: CommandDefinition = {
+      ...command("mcp.linear.query_issues"),
+      inputSchema: {
+        type: "object",
+        properties: { assignee: { type: "string", nullable: true } },
+      },
+    };
+    const [tool] = bridgedTools([nullable]);
+    assert.deepEqual(JSON.parse(JSON.stringify(tool!.inputSchema)), {
+      type: "object",
+      properties: { assignee: { type: ["string", "null"] } },
+    });
+    assert.equal(JSON.stringify(tool!.inputSchema).includes("nullable"), false);
+  });
+
   it("lists each admitted command once, with its description and schema", () => {
     assert.deepEqual(
       bridgedTools([command("bash"), command("mcp.linear.get_issue")]),

@@ -1073,6 +1073,39 @@ names only, never other upstream schema content. The sanitizer's limits are
 object and 64 values per enum. There is no separate per-string length limit;
 the byte limit bounds every string in the schema.
 
+A nullable scalar property is admitted when its schema uses a `type` array
+naming one scalar type and `"null"` (`{"type": ["string","null"]}`) and only
+supported sibling keywords. It becomes that scalar type plus a `nullable`
+flag in the runtime's schema shape. The provider tool projection, the MCP
+call's `toolDefinition` and the Workbench bridge's `tools/list` convert the
+flag to a standard `type` union. The installed MCP SDK validator ignores the
+internal flag and otherwise treats a string property as string-only.
+
+Null type arrays over structured types (`object`, `array`) or multiple
+non-null types are rejected. A null type array with a sibling `anyOf` is
+also rejected, including schemas the previous sanitizer collapsed to string.
+Without a null type array, the legacy `anyOf` handling remains: a node with
+no supported `type` of its own collapses to `type: "string"`, regardless of
+its branches. For example, an `anyOf` of integer and null becomes a string
+property. A multi-type array without null also follows that collapse when
+it has a sibling `anyOf`; without that sibling, it is rejected.
+Inside the runtime, a call may send `null` for a nullable property, and that
+null reaches the server as the null the model sent, while every non-null value
+is validated against the property's own constraints. A declared `enum` is
+exact: an enum that omits null still refuses null even when the property is
+nullable.
+
+For this nullable scalar form, discovery preserves `enum` and finite numeric
+`minimum` and `maximum` bounds. Other keywords, except the annotations `title`,
+`description`, `default`, `examples`, `deprecated`, `readOnly`, `writeOnly` and
+`$comment`, cause rejection instead of being dropped. This includes `pattern`
+and composition constraints. Annotations are omitted from the runtime shape;
+this does not change the existing handling of non-nullable schemas. Output
+conversion removes the internal `nullable` keyword for either boolean value.
+For command-authored nullable `anyOf` properties, publication wraps the
+non-null constraints with a null alternative and keeps any sibling enum
+applicable to both alternatives.
+
 `minimum_clearance = "loopback"` withholds the tools from remote-clearance
 turns. `minimum_clearance = "remote"` declares eligibility for both remote and
 loopback turns. The current boot integration is the UDS daily-driver runtime. A
@@ -4060,3 +4093,9 @@ Document revisions only. Code and behavior changes are tracked in
 - 2026-11-26 - Document that at the current limit a single unproductive step
   ends the turn, not only two in a row, and that a stop names the step the turn
   stopped at rather than the limit it was running under.
+
+- 2026-11-28 - Document nullable scalar normalization for discovered MCP tool
+  schemas, standard JSON Schema publication, and the remaining union limits.
+  Clarify preserved numeric bounds, rejected nullable constraint keywords,
+  omitted annotations, and removal of the internal flag for either boolean.
+  State the changed null-array/anyOf rejection and nullable anyOf publication.

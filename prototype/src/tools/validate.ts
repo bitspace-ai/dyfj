@@ -134,6 +134,16 @@ function validateCommandArgumentValue(
   value: unknown,
   field: string,
 ): string | null {
+  // `null` is a legal value for a property the upstream schema marked
+  // nullable, and the sibling constraints describe the non-null form, so they
+  // are not applied to it. An `enum` is the exception: it states the exact
+  // admitted values, so a nullable enum that omits null still refuses null.
+  if (value === null && property.nullable === true) {
+    if (property.enum !== undefined && !property.enum.includes(null)) {
+      return `${field} must be one of the declared values`;
+    }
+    return null;
+  }
   // A value must match one `anyOf` branch and every sibling constraint.
   if (
     property.anyOf !== undefined &&

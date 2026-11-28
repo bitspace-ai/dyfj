@@ -4,6 +4,7 @@
  */
 
 import type { CommandDefinition, ToolProjection } from "./definition.ts";
+import { standardInputSchema } from "./standard-schema.ts";
 
 export interface CommandRegistry {
   register(command: CommandDefinition): void;
@@ -37,7 +38,9 @@ export function createCommandRegistry(
       return [...byId.values()].map((command) => ({
         name: command.id,
         description: command.description,
-        parameters: command.inputSchema,
+        // A provider is a standards boundary: the runtime's own `nullable`
+        // keyword never crosses it.
+        parameters: standardInputSchema(command.inputSchema),
       }));
     },
   };

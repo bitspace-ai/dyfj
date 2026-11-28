@@ -34,6 +34,15 @@ export type JsonSchemaObject = {
 
 export type JsonSchemaProperty = {
   type?: "string" | "number" | "integer" | "boolean" | "object" | "array";
+  /**
+   * This property also accepts `null`, subject to its enum. The MCP sanitizer
+   * sets this flag from an admitted scalar-plus-null type array; command
+   * authors may also declare it directly. `standardInputSchema` removes the
+   * flag for the provider projection, MCP call definition and bridge listing,
+   * expressing null admission through a type union or an `anyOf` alternative.
+   * Non-null values remain subject to the property's declared constraints.
+   */
+  nullable?: boolean;
   anyOf?: JsonSchemaProperty[];
   pattern?: string;
   description?: string;
@@ -251,11 +260,42 @@ export interface CommandDefinition<TResult = unknown> {
   ) => Promise<TResult> | TResult;
 }
 
+/** A JSON Schema type name, spelled as standard JSON Schema spells it. */
+export type StandardTypeName =
+  | "string"
+  | "number"
+  | "integer"
+  | "boolean"
+  | "object"
+  | "array";
+
+/**
+ * A published property with no internal `nullable` flag. `type` may be a
+ * scalar-plus-null union or the null alternative of a nullable `anyOf`.
+ * Other extension keywords from `JsonSchemaProperty` remain available.
+ */
+export type StandardJsonSchemaProperty =
+  & Omit<JsonSchemaProperty, "type" | "properties" | "items" | "anyOf" | "nullable">
+  & {
+    type?: StandardTypeName | "null" | [StandardTypeName, "null"];
+    anyOf?: StandardJsonSchemaProperty[];
+    properties?: Record<string, StandardJsonSchemaProperty>;
+    items?: StandardJsonSchemaProperty;
+  };
+
+/** An input schema as an output boundary publishes it. */
+export type StandardJsonSchemaObject = {
+  type: "object";
+  required?: string[];
+  properties?: Record<string, StandardJsonSchemaProperty>;
+  additionalProperties?: boolean;
+};
+
 /** What a provider is offered for one command: its name, prose and schema. */
 export interface ToolProjection {
   name: string;
   description: string;
-  parameters: JsonSchemaObject;
+  parameters: StandardJsonSchemaObject;
 }
 
 export type CommandPolicyResult =

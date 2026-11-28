@@ -230,6 +230,11 @@ function propertyProblems(
   if (property.redact !== undefined && typeof property.redact !== "boolean") {
     problems.push(`${where}.redact must be a boolean`);
   }
+  if (
+    property.nullable !== undefined && typeof property.nullable !== "boolean"
+  ) {
+    problems.push(`${where}.nullable must be a boolean`);
+  }
   if (property.pattern !== undefined) {
     if (property.type !== "string") {
       problems.push(`${where}.pattern applies only to strings`);
@@ -275,6 +280,7 @@ function propertyProblems(
 }
 
 function matchesType(property: JsonSchemaProperty, value: unknown): boolean {
+  if (value === null && property.nullable === true) return true;
   switch (property.type) {
     case "integer":
       return Number.isInteger(value);
