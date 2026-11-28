@@ -48,6 +48,29 @@ test("nullable numeric bounds must be finite numbers", () => {
   }
 });
 
+test("null type arrays with anyOf are rejected before legacy collapse", () => {
+  for (const type of [
+    ["string", "null"], ["object", "null"], ["string", "number", "null"],
+  ]) {
+    assert.throws(() => sanitizeMcpInputSchema({
+      type: "object",
+      properties: { value: { type, anyOf: [{ type: "string" }] } },
+    }), McpSchemaRejectedError);
+  }
+});
+
+test("legacy anyOf collapse remains for type arrays without null", () => {
+  const schema = sanitizeMcpInputSchema({
+    type: "object",
+    properties: {
+      value: { type: ["string", "number"], anyOf: [{ type: "integer" }] },
+    },
+  });
+  assert.equal(schema.properties?.value?.type, "string");
+  assert.equal(validateCommandArguments(schema, { value: "text" }), null);
+  assert.notEqual(validateCommandArguments(schema, { value: 1 }), null);
+});
+
 test("nullable schemas refuse malformed enums rather than dropping them", () => {
   for (const value of [null, "all", {}, []]) {
     assert.throws(() => sanitizeMcpInputSchema({

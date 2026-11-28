@@ -270,9 +270,9 @@ describe("external MCP schema limits", () => {
     );
   });
 
-  // Not in the approved scope: a null union over a structured type, and the
-  // anyOf spelling. Both keep the verdict they had, so the sanitizer never
-  // widens the values a property admits.
+  // Structured null unions without anyOf remain rejected. The legacy anyOf
+  // collapse is tested separately; a null type array with an anyOf sibling
+  // is now rejected rather than collapsed.
   it("still refuses a null union over a structured type", () => {
     assert.throws(
       () =>

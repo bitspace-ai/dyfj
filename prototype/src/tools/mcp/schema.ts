@@ -76,11 +76,12 @@ const NULLABLE_SCALAR_KEYWORDS = new Set([
 /**
  * The one upstream spelling this sanitizer admits for a nullable property: a
  * `type` array naming one scalar type and `"null"`. It becomes that scalar type
- * plus `nullable`, so the runtime holds one type per property; every output
- * boundary converts the flag back to the standard union
- * (`tools/standard-schema.ts`). Every other spelling keeps the verdict it had:
- * a union of two or more types is refused with its names, and an `anyOf` is
- * left to the collapse below, which never admits null. The supported `enum`
+ * plus `nullable`, so the runtime holds one type per property. The provider,
+ * MCP call and bridge projections convert the flag to the standard union
+ * (`tools/standard-schema.ts`). A null type array with a sibling `anyOf` is
+ * rejected, including forms the previous sanitizer collapsed to string.
+ * An `anyOf` without a null type array retains the collapse below, which
+ * does not admit null. The supported `enum`
  * keyword is carried through untouched, so a nullable property
  * whose `enum` excludes null still rejects null in argument validation.
  */
@@ -143,8 +144,8 @@ function sanitizeSchemaNode(
   }
   // A `type` array naming one scalar type and `"null"` becomes that scalar
   // type plus `nullable`, so the runtime holds one type per property and
-  // validation still treats null as a legal value. Any other spelling is left
-  // exactly as it was.
+  // validation still treats null as a legal value. Unsupported nullable
+  // siblings are rejected before the legacy anyOf collapse below.
   const nullable = nullableShape(raw);
   const input = nullable === undefined ? raw : nullable.node;
   let type = input.type;

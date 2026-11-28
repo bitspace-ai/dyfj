@@ -12,6 +12,7 @@ import { createCommandRegistry } from "./registry.ts";
 import { standardInputSchema } from "./standard-schema.ts";
 import { callToolDefinition } from "./mcp/adapter.ts";
 import { sanitizeMcpInputSchema } from "./mcp/schema.ts";
+import { validateCommandArguments } from "./validate.ts";
 
 const validator = new CfWorkerJsonSchemaValidator();
 
@@ -28,6 +29,35 @@ const UPSTREAM = {
 };
 
 describe("standardInputSchema", () => {
+  it("publishes null alongside nullable anyOf while preserving enum restrictions", () => {
+    for (const type of [undefined, "string"] as const) {
+      for (const values of [undefined, ["all", null], ["all"]]) {
+        const schema: JsonSchemaObject = {
+          type: "object",
+          properties: {
+            value: {
+              ...(type === undefined ? {} : { type }),
+              nullable: true,
+              anyOf: [{ type: "string", pattern: "^all$" }, { type: "integer" }],
+              ...(values === undefined ? {} : { enum: values }),
+            },
+          },
+        };
+        const original = JSON.stringify(schema);
+        const published = standardInputSchema(schema);
+        for (const value of [null, "all", "other", 1, false, {}]) {
+          assert.equal(
+            valid(published, { value }),
+            validateCommandArguments(schema, { value }) === null,
+            JSON.stringify({ type, values, value }),
+          );
+        }
+        assert.equal(JSON.stringify(published).includes('"nullable"'), false);
+        assert.equal(JSON.stringify(schema), original);
+      }
+    }
+  });
+
   it("strips nullable false at nested output boundaries without changing types", () => {
     const schema: JsonSchemaObject = {
       type: "object",

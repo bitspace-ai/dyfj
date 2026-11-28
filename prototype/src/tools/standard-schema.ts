@@ -8,15 +8,13 @@
  * one scalar type plus that flag, so the runtime never holds a property with
  * two types).
  *
- * A standards validator rejects the flag's property for a `null` value —
- * `{"type":"string","nullable":true}` admits a string only to a JSON Schema
- * engine — so the flag must never cross an output boundary. Every surface that
- * publishes a command's schema converts it through `standardInputSchema`
- * first: the provider tool projection (`registry.ts`), the call's
+ * The installed MCP SDK validator ignores the internal flag and rejects null
+ * for `{"type":"string","nullable":true}`. The provider tool projection
+ * (`registry.ts`), the call's
  * `toolDefinition` schema (`tools/mcp/adapter.ts`) and the Workbench bridge's
- * `tools/list` (`workbench-tool-bridge.ts`). The conversion restores the
- * standard spelling, `{"type":["string","null"]}`, which is the form the
- * server advertised upstream.
+ * `tools/list` (`workbench-tool-bridge.ts`) convert through `standardInputSchema`.
+ * The conversion publishes the scalar union as `{"type":["string","null"]}`;
+ * an `anyOf` with the flag gains a null alternative, subject to a sibling enum.
  *
  * The two shapes are named apart (`JsonSchemaProperty` and
  * `StandardJsonSchemaProperty` in `definition.ts`), so the published one says
@@ -61,8 +59,8 @@ function own<T extends object>(target: T, key: string, value: unknown): void {
 }
 
 /**
- * `property` as standard JSON Schema: `nullable` is replaced by the null union
- * on `type`, and every nested shape is converted the same way. The nested
+ * `property` with its nullable flag converted to a type union or a null
+ * alternative around `anyOf`. Nested shapes are converted recursively. The nested
  * containers are rebuilt rather than mutated, so nothing here writes to the
  * command's own schema.
  */
@@ -103,9 +101,16 @@ function standardProperty(
         own(output, key, value);
     }
   }
+  if (property.nullable === true && (property.anyOf?.length ?? 0) > 0) {
+    // Runtime null admission bypasses the non-null constraints except enum.
+    const widened: StandardJsonSchemaProperty = {
+      anyOf: [output, { type: "null" }],
+    };
+    if (property.enum !== undefined) widened.enum = property.enum;
+    return widened;
+  }
   if (property.nullable === true && property.type !== undefined) {
-    // `type` is the keyword the flag widened, so the union replaces it. A
-    // property with no declared type stays open rather than gain one here.
+    // `type` is the keyword the flag widened, so the union replaces it.
     own(output, "type", [
       property.type satisfies StandardTypeName,
       "null",
@@ -115,10 +120,9 @@ function standardProperty(
 }
 
 /**
- * `schema` as standard JSON Schema: every `nullable` property becomes a `type`
- * union with `"null"`, and the flag itself is absent. A schema that carries no
- * such property is returned unchanged, so publishing one costs nothing and
- * preserves its exact shape.
+ * `schema` with nullable flags removed and null admission expressed through
+ * type unions or `anyOf` alternatives. A schema with no flag is returned by
+ * reference after traversal, without rebuilding it.
  */
 export function standardInputSchema(
   schema: JsonSchemaObject,

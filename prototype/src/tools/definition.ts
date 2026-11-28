@@ -35,14 +35,12 @@ export type JsonSchemaObject = {
 export type JsonSchemaProperty = {
   type?: "string" | "number" | "integer" | "boolean" | "object" | "array";
   /**
-   * This property also accepts `null`. Set only from a `type` array naming one
-   * scalar type and `"null"`; the union becomes that type plus this flag, so
-   * the runtime's own shape carries one type per property. The flag is not JSON
-   * Schema: every output boundary converts it back to the standard union
-   * (`standardInputSchema`), which is what a provider, an MCP client or the
-   * bridge is handed. Validation admits null for the property and keeps every
-   * non-null value subject to the property's own constraints, except that a
-   * declared `enum` remains exact.
+   * This property also accepts `null`, subject to its enum. The MCP sanitizer
+   * sets this flag from an admitted scalar-plus-null type array; command
+   * authors may also declare it directly. `standardInputSchema` removes the
+   * flag for the provider projection, MCP call definition and bridge listing,
+   * expressing null admission through a type union or an `anyOf` alternative.
+   * Non-null values remain subject to the property's declared constraints.
    */
   nullable?: boolean;
   anyOf?: JsonSchemaProperty[];
@@ -272,15 +270,14 @@ export type StandardTypeName =
   | "array";
 
 /**
- * A property as an output boundary publishes it: standard JSON Schema, so no
- * `nullable` flag and no second type keyword. `type` may be the null union the
- * runtime's flag was normalized from (`["string","null"]`), which is the one
- * place this shape is wider than `JsonSchemaProperty`.
+ * A published property with no internal `nullable` flag. `type` may be a
+ * scalar-plus-null union or the null alternative of a nullable `anyOf`.
+ * Other extension keywords from `JsonSchemaProperty` remain available.
  */
 export type StandardJsonSchemaProperty =
   & Omit<JsonSchemaProperty, "type" | "properties" | "items" | "anyOf" | "nullable">
   & {
-    type?: StandardTypeName | [StandardTypeName, "null"];
+    type?: StandardTypeName | "null" | [StandardTypeName, "null"];
     anyOf?: StandardJsonSchemaProperty[];
     properties?: Record<string, StandardJsonSchemaProperty>;
     items?: StandardJsonSchemaProperty;

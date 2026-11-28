@@ -11,37 +11,27 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
-- **A nullable scalar property in a configured external MCP tool's discovered
-  schema reaches the model instead of withholding the tool (`BIT-998`).** A
-  tool whose optional filter admits null — Linear's `list_issues` advertises
-  nullable filters as a `type` array with `"null"` — was dropped at discovery
-  with `schema rejected: type ["string","null"] is not supported`, so no
-  configured query tool could be registered, however the operator's allowlist
-  was written. A `type` array naming one scalar type and `"null"` now
-  normalizes to that scalar type plus a `nullable` flag
-  (`tools/mcp/schema.ts`); the flag is part of the one tool shape
-  (`tools/definition.ts`); and argument validation accepts `null` for a
-  nullable property while still checking every non-null value against the
-  property's own constraints (`tools/validate.ts`). A declared `enum` stays
-  exact, so a nullable enum that omits null still refuses null. The token for
-  a nullable value reaches the connector as the null the model sent, never a
-  stringified placeholder. The flag is internal: an engine that validates a
-  schema reads `nullable` as an unknown keyword and insists the property is a
-  string, so `tools/standard-schema.ts` converts it back to the standard
-  `type` union at each output boundary — the provider tool projection
-  (`tools/registry.ts`), the call's `toolDefinition` schema handed to the MCP
-  client, and the Workbench bridge's `tools/list`
-  (`workbench-tool-bridge.ts`). Nothing else widens: a null union over a
-  structured type (`object`, `array`) keeps the rejection it had, an `anyOf`
-  of one typed node and a null node keeps the collapse it had and does not
-  admit null, and a union of two or more types is still rejected with the same
-  reason. The tool conformance kit accepts the new keyword
-  (`testing/conformance/tool.ts`), and the root README's sanitizer limits state
-  the normalization and its boundaries.
-  Nullable scalar discovery preserves finite numeric `minimum` and `maximum`
-  bounds and enums, and rejects other constraint keywords instead of dropping
-  them. Nullable enums may include null in the conformance kit. Output
-  conversion strips `nullable: false` as well as `nullable: true`, and the
+- **Configured MCP tools can use supported nullable scalar filters
+  (`BIT-998`).** Discovery now admits a `type` array naming one scalar type
+  and `"null"` when its sibling keywords are supported
+  (`tools/mcp/schema.ts`). This enables tools such as Linear issue queries
+  that previously failed discovery on that type array. The internal shape
+  uses one scalar type plus `nullable`; validation accepts null subject to
+  any declared enum and checks non-null values against the retained
+  constraints. Finite numeric `minimum` and `maximum` bounds and enums are
+  preserved. Other constraint keywords are rejected on nullable scalars
+  instead of being dropped; supported annotations are omitted.
+  Null type arrays with a sibling `anyOf` are now rejected, including forms
+  that previously collapsed to string. Structured null unions and unions
+  with multiple non-null types are rejected. Without a null type array,
+  legacy `anyOf` collapse remains, including multi-type arrays with an
+  `anyOf` sibling; this behavior does not preserve the branches' constraints.
+  The provider projection, MCP call's `toolDefinition` and Workbench bridge
+  listing convert nullable scalar types to JSON Schema null unions, because
+  the installed MCP SDK validator ignores the internal flag. Conversion
+  also strips `nullable: false`. Command-authored nullable `anyOf` schemas
+  publish a null alternative while retaining sibling enum restrictions.
+  The tool conformance kit accepts nullable enum null entries, and the
   published property type omits the internal flag.
 
 - **DeepSeek DSML text tool-call markup is recovered, and its markup no longer
