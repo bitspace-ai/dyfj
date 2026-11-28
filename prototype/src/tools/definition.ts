@@ -34,6 +34,17 @@ export type JsonSchemaObject = {
 
 export type JsonSchemaProperty = {
   type?: "string" | "number" | "integer" | "boolean" | "object" | "array";
+  /**
+   * This property also accepts `null`. Set only from a `type` array naming one
+   * scalar type and `"null"`; the union becomes that type plus this flag, so
+   * the runtime's own shape carries one type per property. The flag is not JSON
+   * Schema: every output boundary converts it back to the standard union
+   * (`standardInputSchema`), which is what a provider, an MCP client or the
+   * bridge is handed. Validation admits null for the property and keeps every
+   * non-null value subject to the property's own constraints, except that a
+   * declared `enum` remains exact.
+   */
+  nullable?: boolean;
   anyOf?: JsonSchemaProperty[];
   pattern?: string;
   description?: string;
@@ -251,11 +262,43 @@ export interface CommandDefinition<TResult = unknown> {
   ) => Promise<TResult> | TResult;
 }
 
+/** A JSON Schema type name, spelled as standard JSON Schema spells it. */
+export type StandardTypeName =
+  | "string"
+  | "number"
+  | "integer"
+  | "boolean"
+  | "object"
+  | "array";
+
+/**
+ * A property as an output boundary publishes it: standard JSON Schema, so no
+ * `nullable` flag and no second type keyword. `type` may be the null union the
+ * runtime's flag was normalized from (`["string","null"]`), which is the one
+ * place this shape is wider than `JsonSchemaProperty`.
+ */
+export type StandardJsonSchemaProperty =
+  & Omit<JsonSchemaProperty, "type" | "properties" | "items" | "anyOf">
+  & {
+    type?: StandardTypeName | [StandardTypeName, "null"];
+    anyOf?: StandardJsonSchemaProperty[];
+    properties?: Record<string, StandardJsonSchemaProperty>;
+    items?: StandardJsonSchemaProperty;
+  };
+
+/** An input schema as an output boundary publishes it. */
+export type StandardJsonSchemaObject = {
+  type: "object";
+  required?: string[];
+  properties?: Record<string, StandardJsonSchemaProperty>;
+  additionalProperties?: boolean;
+};
+
 /** What a provider is offered for one command: its name, prose and schema. */
 export interface ToolProjection {
   name: string;
   description: string;
-  parameters: JsonSchemaObject;
+  parameters: StandardJsonSchemaObject;
 }
 
 export type CommandPolicyResult =

@@ -1073,6 +1073,28 @@ names only, never other upstream schema content. The sanitizer's limits are
 object and 64 values per enum. There is no separate per-string length limit;
 the byte limit bounds every string in the schema.
 
+A property the upstream schema declares nullable with a scalar type is
+normalized, not refused, so a query tool whose optional filters admit null
+still reaches the model. The form this normalization admits is a `type` array
+naming one scalar type and `"null"` (`{"type": ["string","null"]}`). It becomes
+that scalar type plus a `nullable` flag in the runtime's own schema shape, and
+every output boundary publishes the standard `type` union again. The provider
+tool projection and the Workbench bridge's `tools/list` both convert, because
+an engine that validates the schema reads `nullable` as an unknown keyword and
+treats the property as string-only. A union over a structured type
+(`["object","null"]`, `["array","null"]`) is still rejected, because its
+`properties` or `items` describe a form a null union does not. An `anyOf` whose
+branches are one typed node and `{"type": "null"}` is not part of this
+normalization: it keeps the sanitizer's existing collapse, which reduces a node
+with no supported `type` of its own to `type: "string"` (an `anyOf` of
+`integer` and `null` becomes a string property) and never admits null. A union
+of two or more types, with or without null, is rejected and named as before.
+Inside the runtime, a call may send `null` for a nullable property, and that
+null reaches the server as the null the model sent, while every non-null value
+is validated against the property's own constraints. A declared `enum` is
+exact: an enum that omits null still refuses null even when the property is
+nullable.
+
 `minimum_clearance = "loopback"` withholds the tools from remote-clearance
 turns. `minimum_clearance = "remote"` declares eligibility for both remote and
 loopback turns. The current boot integration is the UDS daily-driver runtime. A
@@ -4060,3 +4082,6 @@ Document revisions only. Code and behavior changes are tracked in
 - 2026-11-26 - Document that at the current limit a single unproductive step
   ends the turn, not only two in a row, and that a stop names the step the turn
   stopped at rather than the limit it was running under.
+
+- 2026-11-28 - Document nullable scalar normalization for discovered MCP tool
+  schemas, standard JSON Schema publication, and the remaining union limits.

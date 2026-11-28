@@ -236,6 +236,79 @@ describe("declared numeric bounds", () => {
   });
 });
 
+describe("nullable properties", () => {
+  const schema: JsonSchemaObject = {
+    type: "object",
+    properties: {
+      query: { type: "string", nullable: true },
+      count: { type: "integer", minimum: 1, nullable: true },
+      slaType: {
+        type: "string",
+        nullable: true,
+        enum: ["all", "onlyBusinessDays"],
+      },
+      body: { type: "string" },
+    },
+    additionalProperties: false,
+  };
+
+  it("accepts null for a nullable property", () => {
+    assert.strictEqual(
+      validateCommandArguments(schema, { query: null }),
+      null,
+    );
+    assert.strictEqual(validateCommandArguments(schema, { count: null }), null);
+  });
+
+  // A declared enum is the exact set of admitted values. Nullable widens the
+  // type, never the enum, so a nullable enum that omits null still refuses it.
+  it("refuses null for a nullable property whose enum omits null", () => {
+    assert.strictEqual(
+      validateCommandArguments(schema, { slaType: null }),
+      "slaType must be one of the declared values",
+    );
+  });
+
+  it("accepts null for a nullable property whose enum lists null", () => {
+    const withNull: JsonSchemaObject = {
+      type: "object",
+      properties: {
+        slaType: { type: "string", nullable: true, enum: ["all", null] },
+      },
+    };
+    assert.strictEqual(
+      validateCommandArguments(withNull, { slaType: null }),
+      null,
+    );
+    assert.strictEqual(
+      validateCommandArguments(withNull, { slaType: "none" }),
+      "slaType must be one of the declared values",
+    );
+  });
+
+  it("still checks a nullable property's non-null values", () => {
+    assert.strictEqual(
+      validateCommandArguments(schema, { count: 0 }),
+      "count must be at least 1",
+    );
+    assert.strictEqual(
+      validateCommandArguments(schema, { slaType: "all" }),
+      null,
+    );
+    assert.strictEqual(
+      validateCommandArguments(schema, { slaType: "none" }),
+      "slaType must be one of the declared values",
+    );
+  });
+
+  it("still refuses null where the property is not nullable", () => {
+    assert.strictEqual(
+      validateCommandArguments(schema, { body: null }),
+      "body must be a string",
+    );
+  });
+});
+
 describe("anyOf", () => {
   it("requires one matching branch and every sibling constraint", () => {
     const schema: JsonSchemaObject = {

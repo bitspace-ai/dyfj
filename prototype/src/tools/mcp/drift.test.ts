@@ -8,8 +8,8 @@ import {
   buildExternalMcpCommands,
   type ExternalMcpDiagnostic,
   formatExternalMcpDiagnostic,
-  sanitizeMcpInputSchema,
 } from "./adapter.ts";
+import { sanitizeMcpInputSchema } from "./schema.ts";
 
 const CONFIG_PATH = "/private/operator/.dyfj/config.toml";
 
@@ -55,6 +55,11 @@ function tavilyTable() {
 }
 
 const OK_SCHEMA = { type: "object", properties: { id: { type: "string" } } };
+
+/** A sanitized schema as plain objects, so it compares to an object literal. */
+function plain<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
 
 async function diagnose(
   table: Record<string, unknown>,
@@ -224,6 +229,137 @@ describe("external MCP schema limits", () => {
     assert.doesNotThrow(() => sanitizeMcpInputSchema(enumSchema(45)));
   });
 
+  // The observed list_issues schema: an optional filter advertised as a
+  // nullable scalar. Refusing that shape withheld the whole tool, so no
+  // configured query tool could reach the model. The union becomes one scalar
+  // type plus `nullable`; output boundaries restore the standard type union.
+  it("normalizes an observed nullable scalar union into one type plus nullable", () => {
+    assert.deepStrictEqual(
+      plain(sanitizeMcpInputSchema({
+        type: "object",
+        properties: {
+          assignee: { type: ["string", "null"] },
+          count: { type: ["null", "integer"] },
+        },
+      })).properties,
+      {
+        assignee: { type: "string", nullable: true },
+        count: { type: "integer", nullable: true },
+      },
+    );
+  });
+
+  it("carries a nullable property's sibling constraints through untouched", () => {
+    assert.deepStrictEqual(
+      plain(sanitizeMcpInputSchema({
+        type: "object",
+        properties: {
+          state: {
+            type: ["string", "null"],
+            enum: ["all", "onlyBusinessDays"],
+          },
+        },
+      })).properties,
+      {
+        state: {
+          type: "string",
+          nullable: true,
+          enum: ["all", "onlyBusinessDays"],
+        },
+      },
+    );
+  });
+
+  // Not in the approved scope: a null union over a structured type, and the
+  // anyOf spelling. Both keep the verdict they had, so the sanitizer never
+  // widens the values a property admits.
+  it("still refuses a null union over a structured type", () => {
+    assert.throws(
+      () =>
+        sanitizeMcpInputSchema({
+          type: "object",
+          properties: { assignee: { type: ["object", "null"], properties: {} } },
+        }),
+      {
+        message:
+          'external MCP tool schema rejected: type ["object","null"] is not supported',
+      },
+    );
+  });
+
+  it("still refuses a null union over an array", () => {
+    assert.throws(
+      () =>
+        sanitizeMcpInputSchema({
+          type: "object",
+          properties: {
+            labels: { type: ["array", "null"], items: { type: "string" } },
+          },
+        }),
+      {
+        message:
+          'external MCP tool schema rejected: type ["array","null"] is not supported',
+      },
+    );
+  });
+
+  it("does not admit null through the anyOf collapse", () => {
+    assert.deepStrictEqual(
+      plain(sanitizeMcpInputSchema({
+        type: "object",
+        properties: {
+          slaType: {
+            anyOf: [{ type: "string", enum: ["all", "onlyBusinessDays"] }, {
+              type: "null",
+            }],
+          },
+        },
+      })).properties,
+      { slaType: { type: "string" } },
+    );
+  });
+
+  it("still refuses a union of two supported types", () => {
+    assert.throws(
+      () =>
+        sanitizeMcpInputSchema({
+          type: "object",
+          properties: { a: { type: ["string", "number"] } },
+        }),
+      {
+        message:
+          'external MCP tool schema rejected: type ["string","number"] is not supported',
+      },
+    );
+  });
+
+  it("collapses a non-null anyOf exactly as it did before", () => {
+    assert.deepStrictEqual(
+      plain(sanitizeMcpInputSchema({
+        type: "object",
+        properties: {
+          children: {
+            anyOf: [{ type: "string" }, {
+              type: "array",
+              items: { type: "string" },
+            }],
+          },
+        },
+      })).properties,
+      { children: { type: "string" } },
+    );
+  });
+
+  it("does not read a typeless anyOf branch as null", () => {
+    assert.deepStrictEqual(
+      plain(sanitizeMcpInputSchema({
+        type: "object",
+        properties: { estimate: { anyOf: [{ type: "number" }, {}] } },
+      })).properties,
+      { estimate: { type: "string" } },
+    );
+  });
+
   const deep = (levels: number): Record<string, unknown> => {
     let node: Record<string, unknown> = { type: "string" };
     for (let i = 0; i < levels; i++) {
@@ -256,10 +392,14 @@ describe("external MCP schema limits", () => {
       type: "object",
       properties: { a: { $ref: "#/x" } },
     }, "schema rejected: $ref is not supported"],
-    ["unsupported type", {
+    ["unsupported type union", {
       type: "object",
-      properties: { a: { type: ["string", "null"] } },
-    }, 'schema rejected: type ["string","null"] is not supported'],
+      properties: { a: { type: ["string", "number"] } },
+    }, 'schema rejected: type ["string","number"] is not supported'],
+    ["a union of two types and null", {
+      type: "object",
+      properties: { a: { type: ["string", "number", "null"] } },
+    }, 'schema rejected: type ["string","number","null"] is not supported'],
     ["untyped node", {
       type: "object",
       properties: { a: { oneOf: [{ type: "string" }] } },

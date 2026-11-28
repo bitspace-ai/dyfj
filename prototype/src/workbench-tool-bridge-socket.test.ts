@@ -61,6 +61,19 @@ function commands(ran: Ran[]): CommandDefinition[] {
   return [
     define("mcp.linear.get_issue", false),
     define("mcp.linear.save_comment", true),
+    // A command whose schema the sanitizer normalized: the bridge must publish
+    // the standard null union, never the runtime's own `nullable` keyword.
+    {
+      ...define("mcp.linear.query_issues", false),
+      inputSchema: {
+        type: "object",
+        properties: {
+          assignee: { type: "string", nullable: true },
+          team: { type: "string" },
+        },
+        additionalProperties: false,
+      },
+    },
     define("bash", true),
   ];
 }
@@ -139,8 +152,30 @@ describe("the Workbench tool bridge", { skip: skip ?? false }, () => {
       const { tools } = await client.listTools();
       assert.deepEqual(tools.map((tool) => tool.name).sort(), [
         "mcp_linear_get_issue",
+        "mcp_linear_query_issues",
         "mcp_linear_save_comment",
       ]);
+      // `tools/list` is a protocol boundary. The nullable command is published
+      // as the standard null union an MCP client can validate, not as the
+      // runtime's own `nullable` keyword.
+      const published = tools.find((tool) =>
+        tool.name === "mcp_linear_query_issues"
+      )!;
+      assert.deepEqual(
+        JSON.parse(JSON.stringify(published.inputSchema)),
+        {
+          type: "object",
+          properties: {
+            assignee: { type: ["string", "null"] },
+            team: { type: "string" },
+          },
+          additionalProperties: false,
+        },
+      );
+      assert.equal(
+        JSON.stringify(published.inputSchema).includes("nullable"),
+        false,
+      );
     } finally {
       await client.close();
       release();

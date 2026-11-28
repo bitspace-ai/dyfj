@@ -54,10 +54,13 @@ import {
   type ConfirmToolApproval,
   createCommandRegistry,
   invokeCommandWithEvent,
-  type JsonSchemaObject,
   type SessionGrants,
   type ToolCatalogPorts,
 } from "./tools/mod.ts";
+import {
+  standardInputSchema,
+  type StandardInputSchema,
+} from "./tools/standard-schema.ts";
 import { defineGit } from "./tools/builtin/git.ts";
 import {
   type ByteConnection,
@@ -122,7 +125,8 @@ interface BridgedTool {
   name: string;
   commandId: string;
   description: string;
-  inputSchema: JsonSchemaObject;
+  /** Already standard JSON Schema: see `standardInputSchema`. */
+  inputSchema: StandardInputSchema;
 }
 
 /**
@@ -149,7 +153,10 @@ export function bridgedTools(
       description: command.id.startsWith("dispatch/")
         ? `${command.description} ${DISPATCH_COORDINATOR_CONTEXT_LINE}`
         : command.description,
-      inputSchema: command.inputSchema,
+      // `tools/list` is a protocol boundary: an MCP client validates the
+      // schema it is handed, so the runtime's own `nullable` keyword is
+      // published as the standard `type` union it was normalized from.
+      inputSchema: standardInputSchema(command.inputSchema),
     });
   }
   return tools;

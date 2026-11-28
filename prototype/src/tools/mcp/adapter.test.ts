@@ -11,9 +11,11 @@ import {
   buildExternalMcpCommands,
   externalMcpCommandsForTransport,
   requireNegotiatedMcpRevision,
+} from "./adapter.ts";
+import {
   retainConfiguredMcpTools,
   sanitizeMcpInputSchema,
-} from "./adapter.ts";
+} from "./schema.ts";
 import { createCommandRegistry, invokeCommandWithEvent } from "../mod.ts";
 import { SdkError, SdkErrorCode } from "@modelcontextprotocol/client";
 
@@ -798,6 +800,190 @@ describe("MCP HTTP containment", () => {
     );
     assert.partialDeepStrictEqual(result, { decision: "deny", isError: true });
     assert.equal(call.mock.callCount(), 0);
+  });
+
+  it("registers and runs a query tool whose filters are nullable", async () => {
+    let sent: Record<string, unknown> | undefined;
+    const built = await buildExternalMcpCommands(
+      parseMcpServersConfig(
+        serverTable({
+          tools: [{ name: "query_issues", effect: "read", approval: "allow" }],
+        }),
+        CONFIG_PATH,
+      ),
+      { linear_mcp: "secret-value" },
+      {
+        ...WITH_LINEAR,
+        discover: async () => ({
+          revision: "2026-07-28",
+          tools: [{
+            name: "query_issues",
+            inputSchema: {
+              type: "object",
+              properties: {
+                query: { type: ["string", "null"] },
+                state: { type: ["string", "null"] },
+                assignee: { type: ["string", "null"] },
+              },
+              additionalProperties: false,
+            },
+          }],
+        }),
+        call: async (input) => {
+          sent = input.arguments;
+          return {
+            content: [{ type: "text", text: "issues" }],
+            isError: false,
+          };
+        },
+      },
+    );
+    assert.deepStrictEqual(built.diagnostics, [{
+      serverId: "linear",
+      status: "ready",
+      revision: "2026-07-28",
+      toolCount: 1,
+    }]);
+    const [command] = built.commands;
+    assert.deepStrictEqual(
+      JSON.parse(JSON.stringify(command!.inputSchema.properties)),
+      {
+        query: { type: "string", nullable: true },
+        state: { type: "string", nullable: true },
+        assignee: { type: "string", nullable: true },
+      },
+    );
+
+    const invocation = await invokeCommandWithEvent(
+      createCommandRegistry(built.commands),
+      {
+        commandId: "mcp.linear.query_issues",
+        callId: "call-nullable",
+        caller: { principalId: "operator", principalType: "human" },
+        arguments: { query: "BIT-998", state: "Backlog", assignee: null },
+      },
+      {
+        sessionId: "session-1",
+        traceId: "4bf92f3577b34da6a3ce929d0e0e4736",
+        writeEvent: () => {},
+      },
+      undefined,
+      { loopback: true },
+    );
+    assert.partialDeepStrictEqual(invocation, {
+      decision: "allow",
+      isError: false,
+    });
+    // The null filter reaches the server as the null the model sent, not as
+    // a stringified placeholder.
+    assert.deepStrictEqual(sent, {
+      query: "BIT-998",
+      state: "Backlog",
+      assignee: null,
+    });
+  });
+
+  // Discovery succeeding is not evidence that the tool's arguments are
+  // checked: the sanitizer decides which schema the model is handed, and the
+  // shared validator decides what that schema admits. A nullable property must
+  // still refuse a value of the wrong type, and a non-nullable one must still
+  // refuse null.
+  it("rejects invalid arguments for a nullable query tool before any call", async () => {
+    let calls = 0;
+    const built = await buildExternalMcpCommands(
+      parseMcpServersConfig(
+        serverTable({
+          tools: [{ name: "query_issues", effect: "read", approval: "allow" }],
+        }),
+        CONFIG_PATH,
+      ),
+      { linear_mcp: "secret-value" },
+      {
+        ...WITH_LINEAR,
+        discover: async () => ({
+          revision: "2026-07-28",
+          tools: [{
+            name: "query_issues",
+            inputSchema: {
+              type: "object",
+              properties: {
+                query: { type: ["string", "null"] },
+                state: { type: ["string", "null"] },
+                team: { type: "string" },
+                assignee: { type: ["string", "null"] },
+              },
+              required: ["team"],
+              additionalProperties: false,
+            },
+          }],
+        }),
+        call: async () => {
+          calls++;
+          return {
+            content: [{ type: "text", text: "issues" }],
+            isError: false,
+          };
+        },
+      },
+    );
+    assert.deepStrictEqual(built.diagnostics, [{
+      serverId: "linear",
+      status: "ready",
+      revision: "2026-07-28",
+      toolCount: 1,
+    }]);
+
+    const invalid: [string, Record<string, unknown>][] = [
+      ["a nullable string given a number", { team: "BSP", query: 5 }],
+      ["a nullable string given an object", { team: "BSP", assignee: {} }],
+      ["null where the property is not nullable", { team: null }],
+      ["a required argument missing", { query: "BIT-998" }],
+      ["an undeclared argument", { team: "BSP", "kit-undeclared": "x" }],
+    ];
+    for (const [label, args] of invalid) {
+      const result = await invokeCommandWithEvent(
+        createCommandRegistry(built.commands),
+        {
+          commandId: "mcp.linear.query_issues",
+          callId: `call-invalid-${label}`,
+          caller: { principalId: "operator", principalType: "human" },
+          arguments: args,
+        },
+        {
+          sessionId: "session-1",
+          traceId: "4bf92f3577b34da6a3ce929d0e0e4736",
+          writeEvent: () => {},
+        },
+        undefined,
+        { loopback: true },
+      );
+      assert.partialDeepStrictEqual(result, {
+        decision: "deny",
+        authzBasis: "policy:deny:invalid-arguments",
+        isError: true,
+      }, label);
+    }
+    assert.equal(calls, 0);
+
+    // The same tool still runs a call that the schema admits.
+    const allowed = await invokeCommandWithEvent(
+      createCommandRegistry(built.commands),
+      {
+        commandId: "mcp.linear.query_issues",
+        callId: "call-valid",
+        caller: { principalId: "operator", principalType: "human" },
+        arguments: { team: "BSP", query: null, assignee: null },
+      },
+      {
+        sessionId: "session-1",
+        traceId: "4bf92f3577b34da6a3ce929d0e0e4736",
+        writeEvent: () => {},
+      },
+      undefined,
+      { loopback: true },
+    );
+    assert.partialDeepStrictEqual(allowed, { decision: "allow", isError: false });
+    assert.equal(calls, 1);
   });
 
   it("accepts only the observed pinned protocol revision", () => {
